@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Safeguard Vision - Monitor Industrial</title>
+    <!-- Vinculamos la hoja de estilos CSS -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <!-- Fuente Inter de Google Fonts para un look moderno -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container">
+        <!-- Encabezado de la página -->
+        <header>
+            <h1>Safeguard Vision</h1>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <!-- Indicador de estado del sistema -->
+                <div class="status-badge" id="system-status">SISTEMA ACTIVO</div>
+                <!-- Botón de Cerrar Sesión -->
+                <a href="{{ url_for('logout') }}"
+                    style="color: #da3633; text-decoration: none; font-size: 0.9rem; border: 1px solid #da3633; padding: 4px 8px; border-radius: 6px;">Cerrar
+                    Sesión</a>
+            </div>
+        </header>
+
+        <main>
+            <!-- Contenedor del video en vivo -->
+            <div class="video-container">
+                <!-- La fuente de la imagen es la ruta de streaming de video Flask -->
+                <img src="{{ url_for('video_feed') }}" alt="Transmisión en Vivo" id="video-feed">
+                <!-- Superposición con información de la cámara -->
+                <div class="overlay-info">CÁMARA 01 - PLANTA PRINCIPAL</div>
+                <!-- Botón para detener/iniciar el monitoreo -->
+                <button id="play-pause-btn" class="control-btn stop">🛑 DETENER</button>
+            </div>
+
+            <!-- Panel lateral de estadísticas -->
+            <aside class="dashboard-panel">
+                <div class="stat-card">
+                    <h3>Personas Detectadas</h3>
+                    <p class="stat-value" id="person-count">0</p>
+                </div>
+
+                <div class="stat-card danger">
+                    <h3>Infracciones de Seguridad</h3>
+                    <p class="stat-value" id="violation-count">0</p>
+                </div>
+
+                <div class="alerts-section">
+                    <h3>Registro de Alertas</h3>
+                    <ul id="alerts-list">
+                        <!-- Las alertas se insertarán aquí dinámicamente mediante JavaScript -->
+                        <li class="placeholder">Sin alertas recientes...</li>
+                    </ul>
+                </div>
+            </aside>
+        </main>
+    </div>
+
+    <!-- Script para actualizar estadísticas y controlar video -->
+    <script>
+        const video = document.getElementById('video-feed');
+        const btn = document.getElementById('play-pause-btn');
+        let isPlaying = true;
+        const streamUrl = "{{ url_for('video_feed') }}";
+
+        // Manejador del botón Inicio/Parada
+        btn.onclick = () => {
+            if (isPlaying) {
+                // DETENIENDO
+                fetch('/api/toggle_monitor', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'stop' }) // Enviar comando 'stop' al servidor
+                });
+                video.src = ""; // Cortar flujo de video para ahorrar ancho de banda
+                btn.innerHTML = "🟢 INICIAR";
+                btn.className = "control-btn start";
+                video.alt = "SISTEMA DETENIDO";
+            } else {
+                // INICIANDO
+                fetch('/api/toggle_monitor', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'start' }) // Enviar comando 'start' al servidor
+                });
+                video.src = streamUrl; // Restaurar flujo de video
+                btn.innerHTML = "🛑 DETENER";
+                btn.className = "control-btn stop";
+            }
+            isPlaying = !isPlaying;
+        }
+
+        // Función para actualizar estadísticas vía AJAX
+        function updateStats() {
+            fetch('/api/stats')
+                .then(response => response.json())
+                .then(data => {
+                    // Actualizar contadores
+                    document.getElementById('person-count').textContent = data.total_persons;
+                    document.getElementById('violation-count').textContent = data.violations;
+
+                    const alertsList = document.getElementById('alerts-list');
+
+                    // Usar incidentes persistentes de la base de datos
+                    if (data.recent_incidents && data.recent_incidents.length > 0) {
+                        alertsList.innerHTML = ''; // Limpiar lista actual
+                        data.recent_incidents.forEach(incident => {
+                            const li = document.createElement('li');
+                            li.className = 'alert-item';
+
+                            // Formatear fecha a hora legible
+                            const timeStr = new Date(incident.timestamp).toLocaleTimeString();
+
+                            // Crear elemento de texto
+                            const textSpan = document.createElement('span');
+                            textSpan.textContent = `⚠️ ${incident.type} - ${timeStr} `;
+
+                            // Crear enlace a la imagen de captura
+                            if (incident.image_path) {
+                                const link = document.createElement('a');
+                                link.href = "{{ url_for('static', filename='') }}" + incident.image_path;
+                                link.target = "_blank";
+                                link.textContent = "📷"; // Emoji de cámara
+                                link.title = "Ver Captura";
+                                link.style.textDecoration = "none";
+                                link.style.marginLeft = "10px";
+                                link.style.fontSize = "1.2rem";
+
+                                li.appendChild(textSpan);
+                                li.appendChild(link);
+                            } else {
+                                li.appendChild(textSpan);
+                            }
+
+                            alertsList.appendChild(li);
+                        });
+                    } else {
+                        // Opcional: mantener alertas antiguas o mostrar placeholder
+                    }
+
+                    // Feedback visual para violaciones activas (borde rojo o fondo)
+                    if (data.violations > 0) {
+                        document.body.classList.add('alert-active');
+                    } else {
+                        document.body.classList.remove('alert-active');
+                    }
+                })
+                .catch(err => console.error('Error obteniendo estadísticas:', err));
+        }
+
+        // Ejecutar actualización cada segundo
+        setInterval(updateStats, 1000); 
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,6 @@
+flask
+flask-login
+pyngrok
+ultralytics
+opencv-python-headless
+numpy
