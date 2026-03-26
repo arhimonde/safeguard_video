@@ -13,12 +13,19 @@ safeguard.db
 safeguard.db-journal
 
 # Capturas de pantalla e imágenes de incidentes
-static/captures/*.jpg
+static/captures/
+jetson_captures/
+*.jpg
+*.png
 
 # Modelos YOLO y TensorRT (Archivos pesados o específicos de hardware)
 *.pt
 *.engine
+*.onnx
 yolov8n.pt
+
+# Binaries
+loophole
 
 # Archivos de sistema y editores
 .DS_Store

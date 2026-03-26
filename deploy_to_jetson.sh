@@ -1,15 +1,15 @@
 #!/bin/bash
 
-# --- CONFIGURACIÓN ---
-# IMPORTANTE: Actualiza estos valores con los detalles de tu Jetson
+# --- CONFIGURATION ---
+# IMPORTANT: Update these values with your Jetson details
 JETSON_USER="georgegabor"
 JETSON_IP="192.168.1.223"
-REMOTE_PATH="~/safeguard_vision" # No cambiamos la ruta en el NVIDIA, solo en el local
+REMOTE_PATH="~/safeguard_vision"
 # ---------------------
 
-echo "🚀 Iniciando despliegue en Jetson Orin Nano ($JETSON_IP)..."
+echo "🚀 Starting deployment to Jetson Orin Nano ($JETSON_IP)..."
 
-# Usar rsync para sincronizar archivos, excluyendo directorios innecesarios
+# Use rsync to sync files, excluding large/unnecessary directories
 rsync -avz --progress \
     --exclude 'venv' \
     --exclude '__pycache__' \
@@ -17,11 +17,12 @@ rsync -avz --progress \
     --exclude '.gemini' \
     --exclude 'safeguard.db' \
     --exclude 'deploy_to_jetson.sh' \
+    --exclude 'jetson_cmd.sh' \
     ./ $JETSON_USER@$JETSON_IP:$REMOTE_PATH
 
 if [ $? -eq 0 ]; then
-    echo "✅ ¡Despliegue exitoso!"
-    echo "Siguiente paso: Ejecuta ./jetson_cmd.sh setup para instalar dependencias en la Jetson."
+    echo "✅ Deployment successful!"
+    echo "Next: Run ./jetson_cmd.sh setup to install dependencies on the Jetson."
 else
-    echo "❌ El despliegue falló. Por favor verifica la IP y la conexión SSH."
+    echo "❌ Deployment failed. Please check your IP and SSH connection."
 fi

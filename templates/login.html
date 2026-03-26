@@ -5,10 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Iniciar Sesión - Safeguard Vision</title>
-    <!-- Importar fuente Inter -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
-        /* Estilos en línea para la página de login para mantenerla autocontenida y simple */
         body {
             background-color: #0d1117;
             color: #f0f6fc;
@@ -20,7 +18,6 @@
             margin: 0;
         }
 
-        /* Tarjeta de Login */
         .login-card {
             background: #161b22;
             padding: 40px;
@@ -74,16 +71,11 @@
     <div class="login-card">
         <h1>Safeguard Vision</h1>
         <form method="POST">
-            <!-- Campos de entrada -->
             <input type="text" name="username" placeholder="Usuario" required autofocus>
             <input type="password" name="password" placeholder="Contraseña" required>
             <button type="submit">Iniciar Sesión</button>
         </form>
-
-        <!-- Mostrar mensajes de error si existen -->
-        {% if error %}
-        <p class="error">{{ error }}</p>
-        {% endif %}
+        {% if error %}<p class="error">{{ error }}</p>{% endif %}
     </div>
 </body>
 
