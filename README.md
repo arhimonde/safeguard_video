@@ -45,18 +45,25 @@
 
 ## Acceso Remoto (Opcional)
 
-Para ver la cámara desde fuera de la red local (ej. celular):
+Para ver la cámara desde fuera de la red local (internet) de forma gratuita:
 
-1. Instalar `pyngrok` (ya incluido en requirements).
-2. Configurar tu token de ngrok (regístrate en ngrok.com):
+1. Asegúrate de tener el binario `loophole` en la carpeta raíz del proyecto.
+2. Ejecuta el archivo stick de túnel:
    ```bash
-   ngrok config add-authtoken <TU_TOKEN>
+   python loophole_tunnel.py
    ```
-3. Ejecutar el script stick de túnel:
-   ```bash
-   python ngrok_tunnel.py
-   ```
-   Esto mostrará una URL pública (ej. `https://xyz.ngrok-free.app`) para acceder.
+3. El script iniciará automáticamente el túnel y te proporcionará una **URL pública** (ej. `https://xxxx.loophole.site`).
+4. **Nota de Optimización**: El sistema está configurado para transmitir a 20 FPS en modo remoto para ahorrar ancho de banda y evitar lag en internet.
+
+### Uso en NVIDIA Jetson (MAXN Ultra)
+Si usas una Jetson Orin/Xavier, puedes iniciar el sistema optimizado con un solo comando:
+```bash
+# Iniciar localmente (Ultra)
+./jetson_cmd.sh start
+
+# Iniciar remoto (Ultra + Loophole)
+./jetson_cmd.sh remote
+```
 
 ## Estructura del Proyecto
 
