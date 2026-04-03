@@ -4,9 +4,14 @@ import sys
 import time
 import signal
 
-# Configuración de Loophole
-# Permite acceder al servidor local desde internet de forma gratuita.
-# Para el primer uso, es posible que debas loguearte: ./loophole account login
+# --- ACCESO REMOTE (OPCIONAL) ---
+# Para conectarse a través de Loophole desde cualquier lugar del mundo:
+# 1. Asegúrate de que el binario 'loophole' esté en esta carpeta.
+# 2. Ejecuta este script: python3 loophole_tunnel.py
+# 3. El script generará una URL pública (https://xxxx.loophole.site).
+# 4. Usa esa URL en cualquier navegador para ver el sistema Safeguard Vision.
+# 5. Para el primer uso, es posible que debas loguearte en la terminal: ./loophole account login
+# --------------------------------
 
 def start_loophole():
     """
@@ -15,9 +20,11 @@ def start_loophole():
     port = 5000
     print(f" * Iniciando túnel Loophole en el puerto {port}...")
     
-    # Ejecutamos loophole como un subproceso
-    # El comando 'http' crea un túnel para el puerto especificado
-    cmd = ["./loophole", "http", str(port)]
+    # Ejecutamos loophole como un subproceso con un hostname específico para mayor estabilidad
+    import random
+    suffix = random.randint(1000, 9999)
+    custom_host = f"safeguard-vision-{suffix}"
+    cmd = ["./loophole", "http", str(port), "--hostname", custom_host]
     
     try:
         process = subprocess.Popen(
@@ -38,22 +45,24 @@ def start_loophole():
             line = process.stdout.readline()
             if not line:
                 break
-            print(f" [Loophole] {line.strip()}")
-            if "https://" in line and "loophole.site" in line:
-                # Extraer la URL de la línea (usualmente al final)
-                parts = line.split()
-                for part in parts:
-                    if part.startswith("https://"):
-                        public_url = part
-                        break
-                if public_url:
+            line_strip = line.strip()
+            if line_strip:
+                print(f" [Loophole] {line_strip}")
+            
+            # Buscamos la línea que contiene el reenvío (Forwarding)
+            if "Forwarding" in line_strip and "https://" in line_strip:
+                # Extraer la URL de la línea
+                import re
+                urls = re.findall(r'https://[a-zA-Z0-9.-]+\.loophole\.site', line_strip)
+                if urls:
+                    public_url = urls[0]
                     break
         
         if public_url:
             print(f"\n🚀 URL Pública: {public_url}")
             return process, public_url
         else:
-            print("❌ No se pudo extraer la URL de Loophole.")
+            print("❌ No se pudo extraer la URL de Loophole a tiempo.")
             process.terminate()
             return None, None
             

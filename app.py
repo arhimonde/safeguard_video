@@ -1,3 +1,8 @@
+# --- ACCESO REMOTE (OPCIONAL) ---
+# Pentru a accesa acest server de oriunde:
+# 1. Pornește tunelul: python3 loophole_tunnel.py
+# 2. Folosește URL-ul .loophole.site generat.
+# --------------------------------
 from flask import Flask, render_template, Response, jsonify, request, redirect, url_for
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user
 from camera import VideoCamera
@@ -11,7 +16,7 @@ import os
 
 # Flask es el framework web que utilizamos para servir la página y la API.
 app = Flask(__name__)
-app.secret_key = 'super_secret_key_for_demo'
+app.secret_key = os.urandom(24)
 
 # Flask-Login maneja la sesión de usuario.
 login_manager = LoginManager()
@@ -33,8 +38,10 @@ except Exception as e:
     print(f"Error al inicializar la cámara: {e}")
     camera = None
 
-# Cargar detector YOLO
-detector = ObjectDetector(model_path='yolov8n.pt', imgsz=416, half=False)
+# Cargar detector YOLO (Turbo Mode para presentación)
+# Preferimos .engine si existe, altfel folosim .pt
+model_to_use = 'yolov8n.engine' if os.path.exists('yolov8n.engine') else 'yolov8n.pt'
+detector = ObjectDetector(model_path=model_to_use, imgsz=416, half=True)
 
 # Estado compartido entre hilos
 current_stats = {
@@ -88,29 +95,21 @@ def detection_thread_fn():
 det_thread = threading.Thread(target=detection_thread_fn, daemon=True)
 det_thread.start()
 
-# --- GENERADOR DE STREAMING MJPEG A 60 FPS ---
-STREAM_FPS = 60
-STREAM_INTERVAL = 1.0 / STREAM_FPS
-JPEG_QUALITY = 80  # 0-100, menos = más rápido pero menor calidad
+# --- GENERADOR DE STREAMING MJPEG (REMOTE OPTIMIZED) ---
+JPEG_QUALITY = 50  # Optimizado para internet (menos lag)
 
 encode_params = [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
 
 def gen(camera):
     """
-    Genera frames MJPEG a máxima velocidad (hasta 60fps).
+    Genera frames MJPEG a máxima velocidad sin limitadores (FPS infinito).
     No bloquea esperando YOLO; usa el último frame anotado disponible.
     """
     global latest_annotated_frame
-    last_time = time.time()
 
     while True:
-        # Limitar a STREAM_FPS
-        now = time.time()
-        elapsed = now - last_time
-        if elapsed < STREAM_INTERVAL:
-            time.sleep(STREAM_INTERVAL - elapsed)
-        last_time = time.time()
-
+        # Limitamos a ~20FPS para que el túnel de internet no se sature
+        time.sleep(0.05)
         with annotated_frame_lock:
             frame = latest_annotated_frame
 

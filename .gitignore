@@ -35,3 +35,7 @@ loophole
 
 # Logs
 *.log
+
+# Private documentation
+CONNECT_TO_JETSON.md
+TFG_DOCUMENTATION.md

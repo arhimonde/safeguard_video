@@ -23,12 +23,12 @@ case $COMANDO in
         $SSH_CMD -t $JETSON_USER@$JETSON_IP "bash $REMOTE_PATH/remote_setup_jetson.sh"
         ;;
     "start")
-        echo "▶️ Iniciando Safeguard Vision en Jetson..."
-        $SSH_CMD $JETSON_USER@$JETSON_IP "cd $REMOTE_PATH && [ -f venv/bin/activate ] && . venv/bin/activate && python3 app.py"
+        echo "▶️ Iniciando Safeguard Vision en Jetson (Modo ULTRA)..."
+        $SSH_CMD -t $JETSON_USER@$JETSON_IP "sudo -S <<< '$JETSON_PASS' nvpmodel -m 0; sudo -S <<< '$JETSON_PASS' jetson_clocks; export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/aarch64-linux-gnu/tegra:\$LD_LIBRARY_PATH; cd $REMOTE_PATH && python3 app.py"
         ;;
     "remote")
-        echo "🌐 Iniciando Safeguard Vision con Acceso Remoto (Loophole)..."
-        $SSH_CMD $JETSON_USER@$JETSON_IP "cd $REMOTE_PATH && [ -f venv/bin/activate ] && . venv/bin/activate && python3 loophole_tunnel.py"
+        echo "🌐 Iniciando Safeguard Vision con Acceso Remoto ULTRA (Loophole)..."
+        $SSH_CMD -t $JETSON_USER@$JETSON_IP "sudo -S <<< '$JETSON_PASS' nvpmodel -m 0; sudo -S <<< '$JETSON_PASS' jetson_clocks; export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/aarch64-linux-gnu/tegra:\$LD_LIBRARY_PATH; cd $REMOTE_PATH && python3 loophole_tunnel.py"
         ;;
     "stop")
         echo "⏹️ Deteniendo Safeguard Vision en Jetson..."

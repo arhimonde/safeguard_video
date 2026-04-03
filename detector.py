@@ -65,8 +65,8 @@ class ObjectDetector:
         hsv_vest = cv2.cvtColor(vest_roi, cv2.COLOR_BGR2HSV)
 
         # --- Detección de Casco (Refinada para evitar fondos claros) ---
-        # Blanco/Claro - Aumentamos 'Value' mínimo para ser más exigentes con el brillo (evitar paredes)
-        lower_white = np.array([0, 0, 180]); upper_white = np.array([180, 45, 255])
+        # Blanco/Claro - Más estricto con saturación y brillo (evitar paredes grises/blancas)
+        lower_white = np.array([0, 0, 200]); upper_white = np.array([180, 30, 255])
 
         # Amarillo/Verde Neon
         lower_yellow = np.array([20, 50, 70]); upper_yellow = np.array([50, 255, 255])
@@ -122,7 +122,7 @@ class ObjectDetector:
         violation_types = []
 
         h_img, w_img, _ = frame.shape
-        danger_zone_x = int(w_img * 0.7) 
+        danger_zone_x = int(w_img * 0.75) # Zona de peligro al 25% final (derecha) del video
 
         for r in results:
             for box in r.boxes:
