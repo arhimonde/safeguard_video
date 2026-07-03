@@ -22,14 +22,14 @@ class SyntheticCamera:
         cv2.circle(frame, (x, y), 20, (0, 255, 255), -1)
         cv2.putText(frame, "MODO SIMULACION", (100, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
-        # Simular una "persona" con cambios de equipo EPP
+        # Simular una "persona" con cambios de equipo EPI
         head_color = (255, 255, 255) if (self.frame_count // 30) % 2 == 0 else (50, 50, 50) 
         cv2.circle(frame, (320, 200), 40, head_color, -1)
 
         body_color = (0, 165, 255) if (self.frame_count // 60) % 2 == 0 else (100, 100, 100) 
         cv2.rectangle(frame, (280, 240), (360, 400), body_color, -1)
 
-        cv2.putText(frame, "¡Apunta la camara a una persona para probar!", (50, 450), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(frame, "¡Apunta la cámara a una persona para probar!", (50, 450), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
         return True, frame
 
