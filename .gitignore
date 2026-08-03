@@ -23,6 +23,7 @@ jetson_captures/
 *.engine
 *.onnx
 yolov8n.pt
+yolo11n*
 
 # Binaries
 loophole

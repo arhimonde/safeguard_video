@@ -5,21 +5,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Safeguard Vision - Monitor Industrial</title>
-    <!-- Vinculamos la hoja de estilos CSS -->
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <!-- Fuente Inter de Google Fonts para un look moderno -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- Socket.IO client — WebSocket în timp real -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
 </head>
 
 <body>
     <div class="container">
-        <!-- Encabezado de la página -->
         <header>
             <h1>Safeguard Vision</h1>
             <div style="display: flex; gap: 10px; align-items: center;">
-                <!-- Indicador de estado del sistema -->
+                <!-- Indicator conexiune WebSocket -->
+                <div class="status-badge" id="ws-status" style="background: #555;">CONECTANDO...</div>
                 <div class="status-badge" id="system-status">SISTEMA ACTIVO</div>
-                <!-- Botón de Cerrar Sesión -->
                 <a href="{{ url_for('logout') }}"
                     style="color: #da3633; text-decoration: none; font-size: 0.9rem; border: 1px solid #da3633; padding: 4px 8px; border-radius: 6px;">Cerrar
                     Sesión</a>
@@ -27,17 +26,12 @@
         </header>
 
         <main>
-            <!-- Contenedor del video en vivo -->
             <div class="video-container">
-                <!-- La fuente de la imagen es la ruta de streaming de video Flask -->
                 <img src="{{ url_for('video_feed') }}" alt="Transmisión en Vivo" id="video-feed">
-                <!-- Superposición con información de la cámara -->
                 <div class="overlay-info">CÁMARA 01 - PLANTA PRINCIPAL</div>
-                <!-- Botón para detener/iniciar el monitoreo -->
                 <button id="play-pause-btn" class="control-btn stop">🛑 DETENER</button>
             </div>
 
-            <!-- Panel lateral de estadísticas -->
             <aside class="dashboard-panel">
                 <div class="stat-card">
                     <h3>Personas Detectadas</h3>
@@ -52,107 +46,117 @@
                 <div class="alerts-section">
                     <h3>Registro de Alertas</h3>
                     <ul id="alerts-list">
-                        <!-- Las alertas se insertarán aquí dinámicamente mediante JavaScript -->
-                        <li class="placeholder">Sin alertas recentes...</li>
+                        <li class="placeholder">Sin alertas recientes...</li>
                     </ul>
                 </div>
             </aside>
         </main>
     </div>
 
-    <!-- Script para actualizar estadísticas y controlar video -->
     <script>
         const video = document.getElementById('video-feed');
         const btn = document.getElementById('play-pause-btn');
+        const wsStatus = document.getElementById('ws-status');
         let isPlaying = true;
         const streamUrl = "{{ url_for('video_feed') }}";
 
-        // Manejador del botón Inicio/Parada
+        // =========================================================================
+        // WebSocket — conexiune în timp real (înlocuiește AJAX polling)
+        // =========================================================================
+        const socket = io('/monitor', {
+            transports: ['websocket', 'polling']  // WebSocket primar, polling fallback
+        });
+
+        socket.on('connect', () => {
+            wsStatus.textContent = 'CONECTADO';
+            wsStatus.style.background = '#238636';
+            console.log('WebSocket conectat');
+        });
+
+        socket.on('disconnect', () => {
+            wsStatus.textContent = 'DESCONECTADO';
+            wsStatus.style.background = '#da3633';
+            console.log('WebSocket deconectat — reconectare automată...');
+        });
+
+        socket.on('connect_error', () => {
+            wsStatus.textContent = 'RECONNECTANDO...';
+            wsStatus.style.background = '#d29922';
+        });
+
+        // Primim stats push de la server — zero polling!
+        socket.on('stats_update', (data) => {
+            // Actualizăm contatori
+            document.getElementById('person-count').textContent = data.total_persons;
+            document.getElementById('violation-count').textContent = data.violations;
+
+            const alertsList = document.getElementById('alerts-list');
+
+            // Incidente din baza de date
+            if (data.recent_incidents && data.recent_incidents.length > 0) {
+                alertsList.innerHTML = '';
+                data.recent_incidents.forEach(incident => {
+                    const li = document.createElement('li');
+                    li.className = 'alert-item';
+
+                    const timeStr = new Date(incident.timestamp).toLocaleTimeString();
+
+                    const textSpan = document.createElement('span');
+                    textSpan.textContent = `⚠️ ${incident.type} - ${timeStr} `;
+
+                    if (incident.image_path) {
+                        const link = document.createElement('a');
+                        link.href = "{{ url_for('static', filename='') }}" + incident.image_path;
+                        link.target = "_blank";
+                        link.textContent = "📷";
+                        link.title = "Ver Captura";
+                        link.style.textDecoration = "none";
+                        link.style.marginLeft = "10px";
+                        link.style.fontSize = "1.2rem";
+                        li.appendChild(textSpan);
+                        li.appendChild(link);
+                    } else {
+                        li.appendChild(textSpan);
+                    }
+
+                    alertsList.appendChild(li);
+                });
+            }
+
+            // Feedback visual
+            if (data.violations > 0) {
+                document.body.classList.add('alert-active');
+            } else {
+                document.body.classList.remove('alert-active');
+            }
+        });
+
+        // =========================================================================
+        // Buton Start/Stop
+        // =========================================================================
         btn.onclick = () => {
             if (isPlaying) {
-                // DETENIENDO
                 fetch('/api/toggle_monitor', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'stop' }) // Enviar comando 'stop' al servidor
+                    body: JSON.stringify({ action: 'stop' })
                 });
-                video.src = ""; // Cortar flujo de video para ahorrar ancho de banda
+                video.src = "";
                 btn.innerHTML = "🟢 INICIAR";
                 btn.className = "control-btn start";
                 video.alt = "SISTEMA DETENIDO";
             } else {
-                // INICIANDO
                 fetch('/api/toggle_monitor', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'start' }) // Enviar comando 'start' al servidor
+                    body: JSON.stringify({ action: 'start' })
                 });
-                video.src = streamUrl; // Restaurar flujo de video
+                video.src = streamUrl;
                 btn.innerHTML = "🛑 DETENER";
                 btn.className = "control-btn stop";
             }
             isPlaying = !isPlaying;
         }
-
-        // Función para actualizar estadísticas vía AJAX
-        function updateStats() {
-            fetch('/api/stats')
-                .then(response => response.json())
-                .then(data => {
-                    // Actualizar contadores
-                    document.getElementById('person-count').textContent = data.total_persons;
-                    document.getElementById('violation-count').textContent = data.violations;
-
-                    const alertsList = document.getElementById('alerts-list');
-
-                    // Usar incidentes persistentes de la base de datos
-                    if (data.recent_incidents && data.recent_incidents.length > 0) {
-                        alertsList.innerHTML = ''; // Limpiar lista actual
-                        data.recent_incidents.forEach(incident => {
-                            const li = document.createElement('li');
-                            li.className = 'alert-item';
-
-                            // Formatear fecha a hora legible
-                            const timeStr = new Date(incident.timestamp).toLocaleTimeString();
-
-                            // Crear elemento de texto
-                            const textSpan = document.createElement('span');
-                            textSpan.textContent = `⚠️ ${incident.type} - ${timeStr} `;
-
-                            // Crear enlace a la imagen de captura
-                            if (incident.image_path) {
-                                const link = document.createElement('a');
-                                link.href = "{{ url_for('static', filename='') }}" + incident.image_path;
-                                link.target = "_blank";
-                                link.textContent = "📷"; // Emoji de cámara
-                                link.title = "Ver Captura";
-                                link.style.textDecoration = "none";
-                                link.style.marginLeft = "10px";
-                                link.style.fontSize = "1.2rem";
-
-                                li.appendChild(textSpan);
-                                li.appendChild(link);
-                            } else {
-                                li.appendChild(textSpan);
-                            }
-
-                            alertsList.appendChild(li);
-                        });
-                    }
-
-                    // Feedback visual para violaciones activas (borde rojo o fondo)
-                    if (data.violations > 0) {
-                        document.body.classList.add('alert-active');
-                    } else {
-                        document.body.classList.remove('alert-active');
-                    }
-                })
-                .catch(err => console.error('Error obteniendo estadísticas:', err));
-        }
-
-        // Ejecutar actualización cada segundo
-        setInterval(updateStats, 1000); 
     </script>
 </body>
-
 </html>

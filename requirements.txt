@@ -1,6 +1,6 @@
 flask
 flask-login
-pyngrok
+flask-socketio
 ultralytics
 opencv-python-headless
 numpy

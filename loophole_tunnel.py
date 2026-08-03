@@ -84,16 +84,17 @@ if __name__ == "__main__":
         print("Asegúrate de haber descargado el binario de Loophole.")
         sys.exit(1)
         
-    print("Iniciando aplicación Flask...")
+    print("Iniciando aplicación Flask + WebSocket...")
     
     try:
-        # Importar la app de Flask
-        from app import app
+        # Importar la app y socketio de Flask
+        from app import app, socketio
         import os
         os.makedirs('static/captures', exist_ok=True)
         
-        # Ejecutar la app
-        app.run(host='0.0.0.0', port=5000, use_reloader=False)
+        # Ejecutar la app con SocketIO (necesario para WebSocket en tiempo real)
+        socketio.run(app, host='0.0.0.0', port=5000,
+                     debug=False, allow_unsafe_werkzeug=True)
     except KeyboardInterrupt:
         print("\nCerrando túnel y servidor...")
     finally:
