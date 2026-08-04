@@ -3,12 +3,15 @@
 # 1. Pornește tunelul: python3 loophole_tunnel.py
 # 2. Folosește URL-ul .loophole.site generat.
 # --------------------------------
-from flask import Flask, render_template, Response, jsonify, request, redirect, url_for
-from flask_login import LoginManager, login_user, login_required, logout_user, current_user
+from flask import (Flask, render_template, Response, jsonify,
+                   request, redirect, url_for)
+from flask_login import (LoginManager, login_user, login_required,
+                         logout_user, current_user)
 from flask_socketio import SocketIO, emit
-from camera import VideoCamera
+from camera_manager import CameraManager
 from detector import ObjectDetector
-from database import init_db, get_recent_incidents, get_user_by_username, get_user_by_id, create_user
+from database import (init_db, get_recent_incidents, get_user_by_username,
+                      get_user_by_id)
 from werkzeug.security import check_password_hash
 import cv2
 import threading
@@ -18,7 +21,6 @@ import os
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# WebSocket suport — înlocuiește AJAX polling cu push în timp real
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # Sesiuni utilizator
@@ -30,126 +32,149 @@ login_manager.login_view = 'login'
 def load_user(user_id):
     return get_user_by_id(user_id)
 
-# Inițializare bază de date + utilizator admin
 init_db()
 
 # =============================================================================
-# Inițializare cameră
+# CONFIGURARE MODEL YOLO
 # =============================================================================
-camera_source = 0
-try:
-    camera = VideoCamera(camera_source)
-except Exception as e:
-    print(f"Eroare inițializare cameră: {e}")
-    camera = None
+# Alege mărimea modelului în funcție de scenariu:
+#
+#   'n' (nano)   → MAX camere (25+). Cea mai rapidă. Recomandat pt multi-camerá.
+#   's' (small)  → 5-8 camere. Echilibru viteză/precizie.
+#   'm' (medium) → 3-4 camere. Precizie mai bună la distanță.
+#   'l' (large)  → 1-2 camere. Precizie maximă, mai lent.
+#   'x' (xlarge) → 1 cameră. Cea mai precisă, cea mai lentă.
+#
+# Format preferat: TensorRT (.engine) dacă există, altfel PyTorch (.pt)
+# CONVERSIE INT8: rulează `bash convert_to_tensorrt.sh` pentru 2x mai multă viteză
+# =============================================================================
+YOLO_VERSION = 'yolo11'   # 'yolo11' sau 'yolov8'
+YOLO_SIZE = 'n'           # 'n', 's', 'm', 'l', 'x'
 
 # =============================================================================
-# Inițializare detector YOLO11n
-# Preferim .engine (TensorRT) dacă există, altfel .pt (PyTorch)
+# Inițializare Camera Manager + Detector
 # =============================================================================
-model_to_use = 'yolo11n.engine' if os.path.exists('yolo11n.engine') else 'yolo11n.pt'
-detector = ObjectDetector(model_path=model_to_use, imgsz=640, half=True)
+print("=" * 60)
+print("  Safeguard Vision - Multi-Cameră")
+print("=" * 60)
+
+camera_manager = CameraManager()
+
+model_base = f"{YOLO_VERSION}{YOLO_SIZE}"
+model_to_use = f"{model_base}.engine" if os.path.exists(f"{model_base}.engine") else f"{model_base}.pt"
+# imgsz=480: compromis optim pentru 20 camere (mai rapid decât 640, mai precis decât 416)
+# half=False: modelul .engine (INT8/FP16) e deja optimizat; FP16 forțat ar cauza eroare pe INT8
+detector = ObjectDetector(model_path=model_to_use, imgsz=480, half=False)
 
 # =============================================================================
-# Configurare detecție
+# Stare globală per cameră
 # =============================================================================
-TARGET_DETECT_FPS = 18       # FPS target pentru inferență
-FRAME_SKIP = 2               # Procesăm fiecare al N-lea frame
+# {cam_id: {'annotated_frame': np.array, 'stats': dict, 'monitoring': bool}}
+cameras_state = {}
+state_lock = threading.Lock()
+
+def init_camera_state(cam_id):
+    """Inițializează starea pentru o cameră nouă."""
+    with state_lock:
+        cameras_state[cam_id] = {
+            'annotated_frame': None,
+            'stats': {'total_persons': 0, 'violations': 0, 'alerts': [],
+                      'camera_id': cam_id},
+            'monitoring': True
+        }
+
+# Inițializează starea pentru toate camerele existente
+for cam_id in camera_manager.get_active_camera_ids():
+    init_camera_state(cam_id)
 
 # =============================================================================
-# Stare partajată între thread-uri
+# WebSocket broadcast
 # =============================================================================
-current_stats = {
-    'total_persons': 0,
-    'violations': 0,
-    'alerts': []
-}
-monitoring_active = True
-
-annotated_frame_lock = threading.Lock()
-latest_annotated_frame = None
-detection_stats_lock = threading.Lock()
-
-# =============================================================================
-# WebSocket: trimite stats automat la fiecare detecție (fără polling)
-# =============================================================================
-_ws_broadcast_interval = 1.0  # broadcast la maxim 1x/sec
 _last_ws_broadcast = 0
+_ws_broadcast_interval = 1.0
 
-def broadcast_stats(stats):
-    """Trimite stats prin WebSocket către toți clienții conectați."""
+def broadcast_stats():
+    """Trimite stats agregate (toate camerele) prin WebSocket."""
     global _last_ws_broadcast
     now = time.time()
     if now - _last_ws_broadcast < _ws_broadcast_interval:
         return
     _last_ws_broadcast = now
-    db_incidents = get_recent_incidents(5)
+
+    cameras_info = camera_manager.get_all_cameras_info()
+    total_persons = 0
+    total_violations = 0
+    all_alerts = []
+
+    with state_lock:
+        for cam_id, state in cameras_state.items():
+            stats = state['stats']
+            total_persons += stats.get('total_persons', 0)
+            total_violations += stats.get('violations', 0)
+            for alert in stats.get('alerts', []):
+                all_alerts.append(f"[Cam {cam_id}] {alert}")
+
+    db_incidents = get_recent_incidents(10)
+
     socketio.emit('stats_update', {
-        'total_persons': stats['total_persons'],
-        'violations': stats['violations'],
-        'alerts': stats['alerts'],
-        'recent_incidents': db_incidents
-    }, namespace='/monitor', room=None)
-
+        'total_persons': total_persons,
+        'violations': total_violations,
+        'alerts': all_alerts[-10:],
+        'recent_incidents': db_incidents,
+        'cameras': cameras_info
+    }, namespace='/monitor')
 
 # =============================================================================
-# Thread dedicat detecție YOLO11n — frame decimation + FPS stabilizat
+# Thread detecție per cameră
 # =============================================================================
-def detection_thread_fn():
+def detection_thread_fn(cam_id):
     """
-    Thread independent cu inferență YOLO11n + PPE.
-    - Frame decimation: procesează fiecare al N-lea frame
-    - FPS stabilizat: sleep calculat precis
-    - WebSocket broadcast: stats trimise automat (nu polling)
+    Thread dedicat pentru o cameră.
+    FPS adaptiv în funcție de numărul total de camere active.
     """
-    global latest_annotated_frame, current_stats, monitoring_active
-
-    frame_interval = 1.0 / TARGET_DETECT_FPS
-    frame_counter = 0
-
     while True:
+        num_cams = camera_manager.active_count
+        target_fps = detector.get_fps_per_camera(num_cams)
+        frame_interval = 1.0 / target_fps
         loop_start = time.time()
 
+        camera = camera_manager.get_camera(cam_id)
         if camera is None:
-            time.sleep(0.1)
-            continue
+            # Cameră eliminată — ieșim
+            print(f"🛑 Thread detecție oprit pentru camera {cam_id}")
+            return
 
         frame = camera.get_frame()
         if frame is None:
-            time.sleep(0.01)
+            time.sleep(0.05)
             continue
 
-        frame_counter += 1
+        # Verifică dacă monitorizarea e activă pentru această cameră
+        with state_lock:
+            cam_state = cameras_state.get(cam_id)
+            monitoring = cam_state['monitoring'] if cam_state else True
 
-        # Frame decimation
-        if frame_counter % FRAME_SKIP != 0:
-            elapsed = time.time() - loop_start
-            sleep_time = max(0, frame_interval - elapsed)
-            time.sleep(sleep_time)
-            continue
-
-        # Inferență
-        if monitoring_active:
+        if monitoring:
             try:
-                result_frame, stats = detector.detect(frame)
+                result_frame, stats = detector.detect(frame, cam_id)
             except Exception as e:
-                print(f"Eroare detecție: {e}")
+                print(f"❌ Eroare detecție cam {cam_id}: {e}")
                 result_frame = frame.copy()
-                stats = current_stats.copy()
+                stats = {'total_persons': 0, 'violations': 0, 'alerts': [],
+                         'camera_id': cam_id}
         else:
             result_frame = frame.copy()
-            cv2.putText(result_frame, "SISTEMA PAUSADO", (50, 240),
+            cv2.putText(result_frame, "PAUSADA", (50, 240),
                         cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 165, 255), 2)
-            stats = {'total_persons': 0, 'violations': 0, 'alerts': []}
+            stats = {'total_persons': 0, 'violations': 0, 'alerts': [],
+                     'camera_id': cam_id}
 
-        # Update stare partajată
-        with annotated_frame_lock:
-            latest_annotated_frame = result_frame
-        with detection_stats_lock:
-            current_stats = stats
+        with state_lock:
+            if cam_id in cameras_state:
+                cameras_state[cam_id]['annotated_frame'] = result_frame
+                cameras_state[cam_id]['stats'] = stats
 
-        # Broadcast stats via WebSocket
-        broadcast_stats(stats)
+        broadcast_stats()
 
         # FPS stabilizat
         elapsed = time.time() - loop_start
@@ -157,37 +182,44 @@ def detection_thread_fn():
         if sleep_time > 0:
             time.sleep(sleep_time)
 
-# Pornire thread detecție
-det_thread = threading.Thread(target=detection_thread_fn, daemon=True)
-det_thread.start()
+
+def start_detection_thread(cam_id):
+    """Pornește thread-ul de detecție pentru o cameră."""
+    init_camera_state(cam_id)
+    t = threading.Thread(target=detection_thread_fn, args=(cam_id,), daemon=True)
+    t.start()
+    print(f"▶️ Thread detecție pornit pentru camera {cam_id}")
+    return t
+
+# Pornește thread-uri pentru toate camerele inițiale
+_detection_threads = {}
+for cam_id in camera_manager.get_active_camera_ids():
+    _detection_threads[cam_id] = start_detection_thread(cam_id)
 
 # =============================================================================
-# Streaming MJPEG (optimizat)
+# Streaming MJPEG per cameră
 # =============================================================================
-JPEG_QUALITY = 50
-STREAM_TARGET_FPS = 15  # Redus de la 20 → lățime de bandă mai mică
-
+JPEG_QUALITY = 40          # Redus pt 20 camere (lățime de bandă mai mică)
+STREAM_TARGET_FPS = 8      # Redus pt 20 camere (suficient pt monitorizare)
 encode_params = [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
 
-def gen(camera):
-    """
-    Generator MJPEG la FPS constant.
-    Folosește ultimul frame annotat — nu așteaptă YOLO.
-    """
-    global latest_annotated_frame
+def gen(cam_id):
+    """Generator MJPEG pentru o cameră specifică."""
     stream_interval = 1.0 / STREAM_TARGET_FPS
 
     while True:
         stream_start = time.time()
 
-        with annotated_frame_lock:
-            frame = latest_annotated_frame
+        with state_lock:
+            cam_state = cameras_state.get(cam_id)
+            frame = cam_state['annotated_frame'] if cam_state else None
 
         if frame is None:
+            camera = camera_manager.get_camera(cam_id)
             if camera is not None:
                 frame = camera.get_frame()
             if frame is None:
-                time.sleep(0.01)
+                time.sleep(0.02)
                 continue
 
         ret, jpeg = cv2.imencode('.jpg', frame, encode_params)
@@ -197,7 +229,6 @@ def gen(camera):
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
 
-        # FPS stabilizat
         elapsed = time.time() - stream_start
         sleep_time = max(0, stream_interval - elapsed)
         if sleep_time > 0:
@@ -207,34 +238,16 @@ def gen(camera):
 # Rute Flask
 # =============================================================================
 
-@app.route('/api/toggle_monitor', methods=['POST'])
-@login_required
-def toggle_monitor():
-    global monitoring_active
-    data = request.json
-    action = data.get('action')
-
-    if action == 'start':
-        monitoring_active = True
-    elif action == 'stop':
-        monitoring_active = False
-
-    return jsonify({'status': 'ok', 'active': monitoring_active})
-
-
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
-
         user = get_user_by_username(username)
         if user and check_password_hash(user.password_hash, password):
             login_user(user)
             return redirect(url_for('index'))
-        else:
-            return render_template('login.html', error="Usuario o contraseña incorrectos")
-
+        return render_template('login.html', error="Usuario o contraseña incorrectos")
     return render_template('login.html')
 
 
@@ -248,31 +261,133 @@ def logout():
 @app.route('/')
 @login_required
 def index():
-    return render_template('index.html')
+    return render_template('index.html',
+                           cameras=camera_manager.get_all_cameras_info())
 
 
-@app.route('/video_feed')
+@app.route('/video_feed/<int:cam_id>')
 @login_required
-def video_feed():
+def video_feed(cam_id):
+    camera = camera_manager.get_camera(cam_id)
     if camera is None:
-        return "Cámara no disponible", 503
-    return Response(gen(camera),
+        return "Cámara no disponible", 404
+    return Response(gen(cam_id),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
+
+# ---- API: Stats ----
 
 @app.route('/api/stats')
 @login_required
 def get_stats():
-    """Fallback HTTP endpoint — WebSocket e principalul canal."""
-    db_incidents = get_recent_incidents(5)
-    with detection_stats_lock:
-        stats = current_stats.copy()
+    """Stats agregate (toate camerele)."""
+    cameras_info = camera_manager.get_all_cameras_info()
+    total_persons = 0
+    total_violations = 0
+
+    with state_lock:
+        for cam_id, state in cameras_state.items():
+            total_persons += state['stats'].get('total_persons', 0)
+            total_violations += state['stats'].get('violations', 0)
+
     return jsonify({
-        'total_persons': stats['total_persons'],
-        'violations': stats['violations'],
-        'alerts': stats['alerts'],
-        'recent_incidents': db_incidents
+        'total_persons': total_persons,
+        'violations': total_violations,
+        'cameras': cameras_info,
+        'recent_incidents': get_recent_incidents(10)
     })
+
+
+@app.route('/api/camera/<int:cam_id>/stats')
+@login_required
+def get_camera_stats(cam_id):
+    """Stats pentru o cameră specifică."""
+    with state_lock:
+        cam_state = cameras_state.get(cam_id)
+        if cam_state is None:
+            return jsonify({'error': 'Camera not found'}), 404
+        stats = cam_state['stats'].copy()
+    return jsonify({
+        'stats': stats,
+        'recent_incidents': get_recent_incidents(10, camera_id=cam_id)
+    })
+
+
+# ---- API: Camera Management ----
+
+@app.route('/api/cameras')
+@login_required
+def list_cameras():
+    """Lista toate camerele cu status."""
+    return jsonify({'cameras': camera_manager.get_all_cameras_info()})
+
+
+@app.route('/api/camera/add', methods=['POST'])
+@login_required
+def add_camera():
+    """Adaugă o cameră nouă la runtime."""
+    data = request.json
+    name = data.get('name', f'Camera nouă')
+    url = data.get('url')
+
+    if not url:
+        return jsonify({'error': 'URL necesar'}), 400
+
+    cam_id, camera = camera_manager.add_camera(name=name, url=url)
+    if cam_id:
+        start_detection_thread(cam_id)
+        return jsonify({
+            'status': 'ok',
+            'camera_id': cam_id,
+            'info': camera_manager.get_all_cameras_info()
+        })
+    return jsonify({'error': 'Eroare adăugare cameră'}), 500
+
+
+@app.route('/api/camera/<int:cam_id>/toggle', methods=['POST'])
+@login_required
+def toggle_camera(cam_id):
+    """Activează/dezactivează o cameră."""
+    new_state = camera_manager.toggle_camera(cam_id)
+    if new_state is None:
+        return jsonify({'error': 'Camera nu există'}), 404
+
+    if new_state:
+        # Reactivată — pornim thread detecție
+        if cam_id not in _detection_threads or not _detection_threads[cam_id].is_alive():
+            _detection_threads[cam_id] = start_detection_thread(cam_id)
+    else:
+        # Dezactivată — oprim thread
+        if cam_id in cameras_state:
+            with state_lock:
+                cameras_state[cam_id]['monitoring'] = False
+
+    return jsonify({'status': 'ok', 'enabled': new_state})
+
+
+@app.route('/api/camera/<int:cam_id>/remove', methods=['POST'])
+@login_required
+def remove_camera(cam_id):
+    """Șterge o cameră."""
+    camera_manager.remove_camera(cam_id)
+    detector.remove_tracker(cam_id)
+    with state_lock:
+        cameras_state.pop(cam_id, None)
+    return jsonify({'status': 'ok'})
+
+
+@app.route('/api/camera/<int:cam_id>/monitor', methods=['POST'])
+@login_required
+def toggle_monitor_camera(cam_id):
+    """Pauză/reluare monitorizare pentru o cameră."""
+    data = request.json
+    action = data.get('action')
+    with state_lock:
+        if cam_id in cameras_state:
+            cameras_state[cam_id]['monitoring'] = (action == 'start')
+            return jsonify({'status': 'ok',
+                            'monitoring': cameras_state[cam_id]['monitoring']})
+    return jsonify({'error': 'Camera nu există'}), 404
 
 
 # =============================================================================
@@ -281,16 +396,15 @@ def get_stats():
 
 @socketio.on('connect', namespace='/monitor')
 def ws_connect():
-    """Client conectat — trimitem stats curente imediat."""
     if current_user.is_authenticated:
-        with detection_stats_lock:
-            stats = current_stats.copy()
-        db_incidents = get_recent_incidents(5)
+        # Trimite stats curente imediat
+        cameras_info = camera_manager.get_all_cameras_info()
         emit('stats_update', {
-            'total_persons': stats['total_persons'],
-            'violations': stats['violations'],
-            'alerts': stats['alerts'],
-            'recent_incidents': db_incidents
+            'total_persons': 0,
+            'violations': 0,
+            'alerts': [],
+            'cameras': cameras_info,
+            'recent_incidents': get_recent_incidents(10)
         })
     else:
         emit('error', {'message': 'Neautorizat'})
@@ -308,12 +422,11 @@ if __name__ == '__main__':
     if not os.path.exists(save_dir):
         os.makedirs(save_dir, exist_ok=True)
 
-    print("Pornire server Safeguard Vision...")
-    print(f"Model: {model_to_use}")
-    print(f"PPE Model: {'yolo11n_ppe' if detector.ppe_model else 'HSV fallback'}")
-    print(f"Target detecție: {TARGET_DETECT_FPS} FPS (fiecare al {FRAME_SKIP}-lea frame)")
-    print(f"Streaming: {STREAM_TARGET_FPS} FPS, JPEG quality: {JPEG_QUALITY}")
-    print(f"WebSocket: activat (push stats în timp real)")
+    print(f"\n📊 Model: {model_to_use}")
+    print(f"📷 Camere active: {camera_manager.active_count}/{camera_manager.total_count}")
+    print(f"🎯 FPS per cameră: {detector.get_fps_per_camera(camera_manager.active_count)}")
+    print(f"🔌 WebSocket: activat")
+    print("=" * 60)
 
-    # Folosim socketio.run în loc de app.run pentru WebSocket
-    socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)
+    socketio.run(app, host='0.0.0.0', port=5000,
+                 debug=False, allow_unsafe_werkzeug=True)

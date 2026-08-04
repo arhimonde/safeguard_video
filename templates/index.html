@@ -4,79 +4,95 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Safeguard Vision - Monitor Industrial</title>
+    <title>Safeguard Vision - Monitor Multi-Cámara</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-    <!-- Socket.IO client — WebSocket în timp real -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
 </head>
 
 <body>
     <div class="container">
         <header>
-            <h1>Safeguard Vision</h1>
-            <div style="display: flex; gap: 10px; align-items: center;">
-                <!-- Indicator conexiune WebSocket -->
+            <h1>📹 Safeguard Vision</h1>
+            <div class="header-controls">
                 <div class="status-badge" id="ws-status" style="background: #555;">CONECTANDO...</div>
-                <div class="status-badge" id="system-status">SISTEMA ACTIVO</div>
-                <a href="{{ url_for('logout') }}"
-                    style="color: #da3633; text-decoration: none; font-size: 0.9rem; border: 1px solid #da3633; padding: 4px 8px; border-radius: 6px;">Cerrar
-                    Sesión</a>
+                <div class="status-badge" id="cam-count">0 CÁMARAS</div>
+                <a href="{{ url_for('logout') }}" class="logout-btn">Cerrar Sesión</a>
             </div>
         </header>
 
         <main>
-            <div class="video-container">
-                <img src="{{ url_for('video_feed') }}" alt="Transmisión en Vivo" id="video-feed">
-                <div class="overlay-info">CÁMARA 01 - PLANTA PRINCIPAL</div>
-                <button id="play-pause-btn" class="control-btn stop">🛑 DETENER</button>
+            <!-- ============= GRID DE CÁMARAS ============= -->
+            <div class="camera-grid-wrapper">
+                <div class="camera-grid" id="camera-grid">
+                    <!-- Tiles generate dinamic via JS -->
+                </div>
             </div>
 
+            <!-- ============= PANEL LATERAL ============= -->
             <aside class="dashboard-panel">
-                <div class="stat-card">
-                    <h3>Personas Detectadas</h3>
-                    <p class="stat-value" id="person-count">0</p>
+                <!-- Stats agregate -->
+                <div class="stat-row">
+                    <div class="stat-card flex-1">
+                        <h3>Personas</h3>
+                        <p class="stat-value" id="person-count">0</p>
+                    </div>
+                    <div class="stat-card flex-1 danger">
+                        <h3>Infracciones</h3>
+                        <p class="stat-value" id="violation-count" style="color: var(--danger);">0</p>
+                    </div>
                 </div>
 
-                <div class="stat-card danger">
-                    <h3>Infracciones de Seguridad</h3>
-                    <p class="stat-value" id="violation-count">0</p>
+                <!-- Form añadir cámara -->
+                <div class="add-camera-form">
+                    <h3>➕ Añadir Cámara</h3>
+                    <input type="text" id="cam-name" placeholder="Nombre (ej: Depósito B)">
+                    <input type="text" id="cam-url" placeholder="URL RTSP (rtsp://...)">
+                    <button class="add-btn" onclick="addCamera()">Añadir</button>
                 </div>
 
+                <!-- Alertas -->
                 <div class="alerts-section">
-                    <h3>Registro de Alertas</h3>
+                    <h3>🚨 Registro de Alertas</h3>
                     <ul id="alerts-list">
-                        <li class="placeholder">Sin alertas recientes...</li>
+                        <li class="placeholder" style="color: var(--text-secondary); font-size: 0.85rem;">Sin alertas recientes...</li>
                     </ul>
                 </div>
             </aside>
         </main>
     </div>
 
+    <!-- ============= MODAL FULLSCREEN ============= -->
+    <div class="fullscreen-modal" id="fullscreen-modal">
+        <button class="fullscreen-close" onclick="closeFullscreen()">✕</button>
+        <img id="fullscreen-img" src="" alt="">
+        <div class="fullscreen-name" id="fullscreen-name"></div>
+    </div>
+
     <script>
-        const video = document.getElementById('video-feed');
-        const btn = document.getElementById('play-pause-btn');
         const wsStatus = document.getElementById('ws-status');
-        let isPlaying = true;
-        const streamUrl = "{{ url_for('video_feed') }}";
+        const cameraGrid = document.getElementById('camera-grid');
+        const camCount = document.getElementById('cam-count');
+
+        // Estado local
+        let cameras = [];  // lista de info cámaras
 
         // =========================================================================
-        // WebSocket — conexiune în timp real (înlocuiește AJAX polling)
+        // WebSocket
         // =========================================================================
         const socket = io('/monitor', {
-            transports: ['websocket', 'polling']  // WebSocket primar, polling fallback
+            transports: ['websocket', 'polling']
         });
 
         socket.on('connect', () => {
             wsStatus.textContent = 'CONECTADO';
+            wsStatus.className = 'status-badge';
             wsStatus.style.background = '#238636';
-            console.log('WebSocket conectat');
         });
 
         socket.on('disconnect', () => {
             wsStatus.textContent = 'DESCONECTADO';
             wsStatus.style.background = '#da3633';
-            console.log('WebSocket deconectat — reconectare automată...');
         });
 
         socket.on('connect_error', () => {
@@ -84,43 +100,25 @@
             wsStatus.style.background = '#d29922';
         });
 
-        // Primim stats push de la server — zero polling!
         socket.on('stats_update', (data) => {
-            // Actualizăm contatori
-            document.getElementById('person-count').textContent = data.total_persons;
-            document.getElementById('violation-count').textContent = data.violations;
+            // Actualizar contadores
+            document.getElementById('person-count').textContent = data.total_persons || 0;
+            document.getElementById('violation-count').textContent = data.violations || 0;
 
-            const alertsList = document.getElementById('alerts-list');
+            // Actualizar lista de cámaras
+            if (data.cameras) {
+                cameras = data.cameras;
+                renderCameraGrid();
+            }
 
-            // Incidente din baza de date
+            // Alertas
+            if (data.alerts && data.alerts.length > 0) {
+                renderAlerts(data.alerts);
+            }
+
+            // Incidentes DB
             if (data.recent_incidents && data.recent_incidents.length > 0) {
-                alertsList.innerHTML = '';
-                data.recent_incidents.forEach(incident => {
-                    const li = document.createElement('li');
-                    li.className = 'alert-item';
-
-                    const timeStr = new Date(incident.timestamp).toLocaleTimeString();
-
-                    const textSpan = document.createElement('span');
-                    textSpan.textContent = `⚠️ ${incident.type} - ${timeStr} `;
-
-                    if (incident.image_path) {
-                        const link = document.createElement('a');
-                        link.href = "{{ url_for('static', filename='') }}" + incident.image_path;
-                        link.target = "_blank";
-                        link.textContent = "📷";
-                        link.title = "Ver Captura";
-                        link.style.textDecoration = "none";
-                        link.style.marginLeft = "10px";
-                        link.style.fontSize = "1.2rem";
-                        li.appendChild(textSpan);
-                        li.appendChild(link);
-                    } else {
-                        li.appendChild(textSpan);
-                    }
-
-                    alertsList.appendChild(li);
-                });
+                renderIncidents(data.recent_incidents);
             }
 
             // Feedback visual
@@ -132,30 +130,176 @@
         });
 
         // =========================================================================
-        // Buton Start/Stop
+        // Renderizar grid de cámaras
         // =========================================================================
-        btn.onclick = () => {
-            if (isPlaying) {
-                fetch('/api/toggle_monitor', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'stop' })
-                });
-                video.src = "";
-                btn.innerHTML = "🟢 INICIAR";
-                btn.className = "control-btn start";
-                video.alt = "SISTEMA DETENIDO";
-            } else {
-                fetch('/api/toggle_monitor', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ action: 'start' })
-                });
-                video.src = streamUrl;
-                btn.innerHTML = "🛑 DETENER";
-                btn.className = "control-btn stop";
+        function renderCameraGrid() {
+            camCount.textContent = `${cameras.length} CÁMARAS`;
+
+            if (cameras.length === 0) {
+                cameraGrid.innerHTML = `
+                    <div class="no-cameras">
+                        <h2>No hay cámaras configuradas</h2>
+                        <p>Añade una cámara usando el formulario de la derecha,<br>
+                           o edita <code>cameras.json</code> y reinicia.</p>
+                    </div>`;
+                cameraGrid.className = 'camera-grid';
+                return;
             }
-            isPlaying = !isPlaying;
+
+            // Clase para grid de cámara única
+            cameraGrid.className = cameras.length === 1
+                ? 'camera-grid single-camera'
+                : 'camera-grid';
+
+            // Optimización: solo actualizar si cambió el número de cámaras
+            const existingTiles = cameraGrid.querySelectorAll('.camera-tile');
+            if (existingTiles.length !== cameras.length) {
+                // Recrear tiles
+                cameraGrid.innerHTML = cameras.map(cam => createTileHTML(cam)).join('');
+                // Iniciar streams
+                cameras.forEach(cam => startStream(cam));
+            } else {
+                // Solo actualizar status/info overlays
+                cameras.forEach(cam => updateTileInfo(cam));
+            }
+        }
+
+        function createTileHTML(cam) {
+            const statusClass = cam.status || 'offline';
+            const statusText = (cam.status || 'offline').toUpperCase();
+            return `
+                <div class="camera-tile" id="tile-${cam.id}"
+                     onclick="openFullscreen(${cam.id})">
+                    <img id="stream-${cam.id}" src="" alt="${cam.name}">
+                    <div class="tile-overlay">
+                        <div class="tile-top">
+                            <span class="tile-name">${cam.name}</span>
+                            <span class="tile-status ${statusClass}" id="status-${cam.id}">${statusText}</span>
+                        </div>
+                        <div class="tile-bottom">
+                            <div class="tile-stats" id="stats-${cam.id}">
+                                <span class="tile-persons">👤 0</span>
+                                <span class="tile-violations">⚠️ 0</span>
+                            </div>
+                            <div class="tile-controls" onclick="event.stopPropagation()">
+                                <button class="tile-btn" onclick="toggleCamera(${cam.id})"
+                                        title="Activar/Desactivar">
+                                    ${cam.enabled ? '⏸️' : '▶️'}
+                                </button>
+                                <button class="tile-btn danger" onclick="removeCamera(${cam.id})"
+                                        title="Eliminar">🗑️</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
+        }
+
+        function startStream(cam) {
+            const img = document.getElementById(`stream-${cam.id}`);
+            if (img && cam.enabled && cam.status !== 'disabled') {
+                img.src = `/video_feed/${cam.id}`;
+            }
+        }
+
+        function updateTileInfo(cam) {
+            const statusEl = document.getElementById(`status-${cam.id}`);
+            if (statusEl) {
+                const sc = cam.status || 'offline';
+                statusEl.className = `tile-status ${sc}`;
+                statusEl.textContent = sc.toUpperCase();
+            }
+        }
+
+        // =========================================================================
+        // Funciones de cámara
+        // =========================================================================
+        function addCamera() {
+            const name = document.getElementById('cam-name').value.trim();
+            const url = document.getElementById('cam-url').value.trim();
+            if (!url) { alert('URL necesaria'); return; }
+
+            fetch('/api/camera/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name || 'Cámara', url: url })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'ok') {
+                    document.getElementById('cam-name').value = '';
+                    document.getElementById('cam-url').value = '';
+                    // El WebSocket actualizará el grid
+                } else {
+                    alert('Error: ' + (data.error || 'desconocido'));
+                }
+            })
+            .catch(err => alert('Error: ' + err));
+        }
+
+        function toggleCamera(camId) {
+            fetch(`/api/camera/${camId}/toggle`, { method: 'POST' })
+                .then(r => r.json())
+                .then(() => {
+                    // WebSocket actualizará
+                    setTimeout(() => location.reload(), 500);
+                });
+        }
+
+        function removeCamera(camId) {
+            if (!confirm('¿Eliminar esta cámara?')) return;
+            fetch(`/api/camera/${camId}/remove`, { method: 'POST' })
+                .then(() => setTimeout(() => location.reload(), 500));
+        }
+
+        // =========================================================================
+        // Fullscreen modal
+        // =========================================================================
+        function openFullscreen(camId) {
+            const cam = cameras.find(c => c.id === camId);
+            if (!cam) return;
+            const modal = document.getElementById('fullscreen-modal');
+            const img = document.getElementById('fullscreen-img');
+            const nameEl = document.getElementById('fullscreen-name');
+            img.src = `/video_feed/${camId}`;
+            nameEl.textContent = `${cam.name} (ID: ${camId})`;
+            modal.classList.add('active');
+        }
+
+        function closeFullscreen() {
+            const modal = document.getElementById('fullscreen-modal');
+            const img = document.getElementById('fullscreen-img');
+            img.src = '';
+            modal.classList.remove('active');
+        }
+
+        // ESC para cerrar fullscreen
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeFullscreen();
+        });
+
+        // =========================================================================
+        // Renderizar alertas / incidentes
+        // =========================================================================
+        function renderAlerts(alerts) {
+            // Las alertas se muestran desde incidents de la DB
+        }
+
+        function renderIncidents(incidents) {
+            const alertsList = document.getElementById('alerts-list');
+            alertsList.innerHTML = '';
+            incidents.forEach(inc => {
+                const li = document.createElement('li');
+                li.className = 'alert-item';
+                const timeStr = new Date(inc.timestamp).toLocaleTimeString();
+                const camTag = inc.camera_id ? ` [Cam ${inc.camera_id}]` : '';
+                let html = `<span>⚠️ ${inc.type}${camTag} - ${timeStr} `;
+                if (inc.image_path) {
+                    html += `<a href="/static/${inc.image_path}" target="_blank" style="text-decoration:none;font-size:1.2rem">📷</a>`;
+                }
+                html += `</span>`;
+                li.innerHTML = html;
+                alertsList.appendChild(li);
+            });
         }
     </script>
 </body>

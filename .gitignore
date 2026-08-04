@@ -12,6 +12,9 @@ __pycache__/
 safeguard.db
 safeguard.db-journal
 
+# Configuración de cámaras (contiene credenciales RTSP)
+cameras.json
+
 # Capturas de pantalla e imágenes de incidentes
 static/captures/
 jetson_captures/
