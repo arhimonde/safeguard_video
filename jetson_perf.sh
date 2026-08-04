@@ -23,8 +23,8 @@ else:
     print(f'⚠️ ADVERTENCIA: CUDA NO ENCONTRADO. Ejecutando en CPU.')
     device = 'cpu'
 
-print(f'\n--- Prueba de Rendimiento YOLOv8 ---')
-model = YOLO('yolov8n.pt')
+print(f'\n--- Prueba de Rendimiento YOLO11 ---')
+model = YOLO('yolo11n.pt')
 model.to(device)
 
 # Crear imagen ficticia para el benchmark

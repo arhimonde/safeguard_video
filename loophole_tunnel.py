@@ -1,17 +1,9 @@
 import os
+import random
+import re
 import subprocess
 import sys
 import time
-import signal
-
-# --- ACCESO REMOTE (OPCIONAL) ---
-# Para conectarse a través de Loophole desde cualquier lugar del mundo:
-# 1. Asegúrate de que el binario 'loophole' esté en esta carpeta.
-# 2. Ejecuta este script: python3 loophole_tunnel.py
-# 3. El script generará una URL pública (https://xxxx.loophole.site).
-# 4. Usa esa URL en cualquier navegador para ver el sistema Safeguard Vision.
-# 5. Para el primer uso, es posible que debas loguearte en la terminal: ./loophole account login
-# --------------------------------
 
 def start_loophole():
     """
@@ -21,7 +13,6 @@ def start_loophole():
     print(f" * Iniciando túnel Loophole en el puerto {port}...")
     
     # Ejecutamos loophole como un subproceso con un hostname específico para mayor estabilidad
-    import random
     suffix = random.randint(1000, 9999)
     custom_host = f"safeguard-vision-{suffix}"
     cmd = ["./loophole", "http", str(port), "--hostname", custom_host]
@@ -52,7 +43,6 @@ def start_loophole():
             # Buscamos la línea que contiene el reenvío (Forwarding)
             if "Forwarding" in line_strip and "https://" in line_strip:
                 # Extraer la URL de la línea
-                import re
                 urls = re.findall(r'https://[a-zA-Z0-9.-]+\.loophole\.site', line_strip)
                 if urls:
                     public_url = urls[0]
@@ -89,7 +79,6 @@ if __name__ == "__main__":
     try:
         # Importar la app y socketio de Flask
         from app import app, socketio
-        import os
         os.makedirs('static/captures', exist_ok=True)
         
         # Ejecutar la app con SocketIO (necesario para WebSocket en tiempo real)

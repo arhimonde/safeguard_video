@@ -101,7 +101,6 @@ class VideoCamera:
                 if kind == 'csi':
                     backend = cv2.CAP_GSTREAMER
                 else:
-                    import os
                     if isinstance(src, int) and not os.path.exists(f"/dev/video{src}"):
                         continue
                     backend = cv2.CAP_V4L2

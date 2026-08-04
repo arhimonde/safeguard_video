@@ -48,7 +48,7 @@ init_db()
 # Format preferat: TensorRT (.engine) dacă există, altfel PyTorch (.pt)
 # CONVERSIE INT8: rulează `bash convert_to_tensorrt.sh` pentru 2x mai multă viteză
 # =============================================================================
-YOLO_VERSION = 'yolo11'   # 'yolo11' sau 'yolov8'
+YOLO_VERSION = 'yolo11'
 YOLO_SIZE = 'n'           # 'n', 's', 'm', 'l', 'x'
 
 # =============================================================================

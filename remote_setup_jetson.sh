@@ -47,6 +47,6 @@ pip install -r requirements.txt
 
 # 8. Verificación Final de GPU
 echo "--- Verificación Final de GPU ---"
-python3 -c "from ultralytics import YOLO; import torch; model = YOLO('yolov8n.pt'); print('YOLO está utilizando:', model.device)"
+python3 -c "from ultralytics import YOLO; import torch; model = YOLO('yolo11n.pt'); print('YOLO está utilizando:', model.device)"
 
 echo "✅ ¡Configuración finalizada! Por favor ejecuta ./jetson_cmd.sh perf para verificar el aumento de FPS."
