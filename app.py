@@ -55,10 +55,9 @@ YOLO_SIZE = 'n'           # 'n', 's', 'm', 'l', 'x'
 # =============================================================================
 # Inițializare Camera Manager + Detector
 # =============================================================================
-camera_manager = CameraManager()
-
 # Detectare hardware — parametri se adaptează automat (Jetson / GPU / CPU)
 hw = detect_jetson_profile()
+camera_manager = CameraManager(max_cameras=hw['max_cameras'])
 
 model_base = f"{YOLO_VERSION}{YOLO_SIZE}"
 model_to_use = f"{model_base}.engine" if os.path.exists(f"{model_base}.engine") else f"{model_base}.pt"
@@ -446,8 +445,9 @@ if __name__ == '__main__':
     print(f"🖥️  Hardware: {hw['name']}")
     print(f"⚡  Target: {hw['target_total_fps']} FPS total | "
           f"imgsz: {hw['imgsz']} | INT8: {'da' if hw['supports_int8'] else 'nu'}")
+    print(f"📹 Limită camere: {camera_manager.active_count}/{hw['max_cameras']} active "
+          f"({camera_manager.total_count} configurate)")
     print(f"📊 Model: {model_to_use}")
-    print(f"📷 Camere active: {camera_manager.active_count}/{camera_manager.total_count}")
     print(f"🎯 FPS per cameră: {detector.get_fps_per_camera(camera_manager.active_count)}")
     print(f"🔌 WebSocket: activat")
     print("=" * 60)

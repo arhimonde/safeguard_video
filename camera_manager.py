@@ -14,12 +14,19 @@ class CameraManager:
     Configurare din cameras.json, suportă add/remove la runtime.
     """
 
-    def __init__(self, config_path=CAMERAS_CONFIG_PATH):
+    def __init__(self, config_path=CAMERAS_CONFIG_PATH, max_cameras=None):
+        """
+        max_cameras: limită maximă de camere active simultan (din profil hardware).
+                     None = fără limită (compatibilitate).
+        Camerele peste limită rămân în stare 'pending' și pornesc automat
+        când se eliberează loc (remove/toggle off).
+        """
         self.config_path = config_path
-        self.cameras = {}       # {cam_id: VideoCamera}
+        self.cameras = {}       # {cam_id: VideoCamera} — doar camerele ACTIVE
         self.config = []        # lista de dicționare din JSON
         self._lock = threading.Lock()
         self._next_id = 1
+        self.max_cameras = max_cameras  # limită hardware
 
         # Încarcă configurare și inițializează camerele
         self._load_config()
@@ -60,17 +67,33 @@ class CameraManager:
     # -----------------------------------------------------------------
 
     def _start_all(self):
-        """Pornește toate camerele din configurare."""
-        for cam_cfg in self.config:
-            if cam_cfg.get('enabled', True):
-                self._start_camera(cam_cfg)
+        """Pornește camerele din configurare, respectând limita hardware."""
+        enabled_cams = [c for c in self.config if c.get('enabled', True)]
+        active_count = len(self.cameras)
+
+        for cam_cfg in enabled_cams:
+            # Oprim dacă am atins limita hardware
+            if self.max_cameras is not None and active_count >= self.max_cameras:
+                remaining = len(enabled_cams) - active_count
+                print(f"⚠️ Limită hardware: {active_count}/{self.max_cameras} camere active.")
+                print(f"   {remaining} camer(e) rămân în așteptare (vor porni când se eliberează loc).")
+                break
+            if self._start_camera(cam_cfg):
+                active_count += 1
 
         if not self.cameras:
             print("⚠️ Nicio cameră configurată și activă.")
             print("   Adaugă camere în cameras.json sau via API /api/camera/add")
 
     def _start_camera(self, cam_cfg):
-        """Inițializează o cameră din configurație."""
+        """
+        Inițializează o cameră din configurație.
+        Returnează True dacă a pornit, False altfel (limită atinsă sau eroare).
+        """
+        # Verifică limita hardware
+        if self.max_cameras is not None and len(self.cameras) >= self.max_cameras:
+            return False
+
         cam_id = cam_cfg['id']
         name = cam_cfg.get('name', f'Camera {cam_id}')
         url = cam_cfg['url']
@@ -90,8 +113,10 @@ class CameraManager:
             with self._lock:
                 self.cameras[cam_id] = camera
             print(f"📹 Camera {cam_id} '{name}' pornită (sursa: {source})")
+            return True
         except Exception as e:
             print(f"❌ Camera {cam_id} '{name}' eroare: {e}")
+            return False
 
     # -----------------------------------------------------------------
     # Management camere (add/remove/toggle)
@@ -100,7 +125,8 @@ class CameraManager:
     def add_camera(self, name, url, enabled=True):
         """
         Adaugă o cameră nouă la runtime.
-        Returnează (cam_id, camera) sau (None, error).
+        Dacă limita hardware e atinsă, cameră rămâne în 'pending'.
+        Returnează (cam_id, camera) — camera e None dacă a rămas pending.
         """
         cam_id = self._next_id
         self._next_id += 1
@@ -115,15 +141,40 @@ class CameraManager:
         self._save_config()
 
         if enabled:
-            self._start_camera(cam_cfg)
-            with self._lock:
-                cam = self.cameras.get(cam_id)
-            return cam_id, cam
+            started = self._start_camera(cam_cfg)
+            if started:
+                with self._lock:
+                    cam = self.cameras.get(cam_id)
+                return cam_id, cam
+            else:
+                # Limită atinsă — cameră rămâne în așteptare
+                print(f"⏳ Camera {cam_id} '{name}' în așteptare "
+                      f"(limită hardware: {self.max_cameras} camere).")
+                return cam_id, None
         else:
             return cam_id, None
 
+    def _promote_next_pending(self):
+        """
+        Pornește următoarea cameră din așteptare dacă există loc.
+        Apelat automat după remove/toggle off.
+        """
+        if self.max_cameras is None:
+            return  # fără limită, nimic de promovat
+
+        if len(self.cameras) >= self.max_cameras:
+            return  # încă la limită
+
+        # Găsește camerele enabled dar ne-pornite (pending)
+        active_ids = set(self.cameras.keys())
+        for cam_cfg in self.config:
+            if cam_cfg.get('enabled', True) and cam_cfg['id'] not in active_ids:
+                print(f"↗️ Promovez camera {cam_cfg['id']} '{cam_cfg.get('name')}' din așteptare.")
+                self._start_camera(cam_cfg)
+                return  # promovăm doar una per eliberare de loc
+
     def remove_camera(self, cam_id):
-        """Oprește și șterge o cameră."""
+        """Oprește și șterge o cameră. Promovează automat următoarea din așteptare."""
         with self._lock:
             if cam_id in self.cameras:
                 self.cameras[cam_id].stop()
@@ -133,22 +184,29 @@ class CameraManager:
         self._save_config()
         print(f"🗑️ Camera {cam_id} ștearsă")
 
+        # Promovează următoarea cameră din așteptare
+        self._promote_next_pending()
+
     def toggle_camera(self, cam_id):
-        """Activează/dezactivează o cameră."""
+        """Activează/dezactivează o cameră. Promovează automat la dezactivare."""
         for cam_cfg in self.config:
             if cam_cfg['id'] == cam_id:
                 currently_enabled = cam_cfg.get('enabled', True)
                 cam_cfg['enabled'] = not currently_enabled
 
                 if not currently_enabled:
-                    # Pornim
-                    self._start_camera(cam_cfg)
+                    # Pornim — verifică dacă e loc disponibil
+                    started = self._start_camera(cam_cfg)
+                    if not started and self.max_cameras is not None:
+                        print(f"⏳ Camera {cam_id} nu poate porni — limită hardware atinsă.")
                 else:
                     # Oprim
                     with self._lock:
                         if cam_id in self.cameras:
                             self.cameras[cam_id].stop()
                             del self.cameras[cam_id]
+                    # Promovează următoarea cameră din așteptare
+                    self._promote_next_pending()
 
                 self._save_config()
                 return cam_cfg['enabled']
@@ -174,12 +232,23 @@ class CameraManager:
         for cam_cfg in self.config:
             cam_id = cam_cfg['id']
             cam = self.cameras.get(cam_id)
+            is_enabled = cam_cfg.get('enabled', True)
+
+            # Determină statusul real
+            if cam:
+                status = cam.status
+            elif is_enabled and self.max_cameras is not None:
+                # Enabled dar ne-pornită = în așteptare (limită hardware)
+                status = 'pending'
+            else:
+                status = 'disabled'
+
             info.append({
                 'id': cam_id,
                 'name': cam_cfg.get('name', ''),
                 'url': cam_cfg.get('url', ''),
-                'enabled': cam_cfg.get('enabled', True),
-                'status': cam.status if cam else 'disabled',
+                'enabled': is_enabled,
+                'status': status,
                 'fps': round(cam.fps, 1) if cam else 0
             })
         return info

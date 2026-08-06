@@ -225,6 +225,7 @@ main {
 .tile-status.error { background: var(--danger); color: white; }
 .tile-status.reconnecting { background: var(--warning); color: black; }
 .tile-status.synthetic { background: #6e40c9; color: white; }
+.tile-status.pending { background: #1f6feb; color: white; }
 
 /* =========================================================================
    Placeholder când nu există camere
