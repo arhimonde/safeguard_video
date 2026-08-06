@@ -10,6 +10,7 @@ from flask_login import (LoginManager, login_user, login_required,
 from flask_socketio import SocketIO, emit
 from camera_manager import CameraManager
 from detector import ObjectDetector
+from jetson_profile import detect_jetson_profile
 from database import (init_db, get_recent_incidents, get_user_by_username,
                       get_user_by_id)
 from werkzeug.security import check_password_hash
@@ -54,17 +55,15 @@ YOLO_SIZE = 'n'           # 'n', 's', 'm', 'l', 'x'
 # =============================================================================
 # Inițializare Camera Manager + Detector
 # =============================================================================
-print("=" * 60)
-print("  Safeguard Vision - Multi-Cameră")
-print("=" * 60)
-
 camera_manager = CameraManager()
+
+# Detectare hardware — parametri se adaptează automat (Jetson / GPU / CPU)
+hw = detect_jetson_profile()
 
 model_base = f"{YOLO_VERSION}{YOLO_SIZE}"
 model_to_use = f"{model_base}.engine" if os.path.exists(f"{model_base}.engine") else f"{model_base}.pt"
-# imgsz=480: compromis optim pentru 20 camere (mai rapid decât 640, mai precis decât 416)
 # half=False: modelul .engine (INT8/FP16) e deja optimizat; FP16 forțat ar cauza eroare pe INT8
-detector = ObjectDetector(model_path=model_to_use, imgsz=480, half=False)
+detector = ObjectDetector(model_path=model_to_use, half=False)
 
 # =============================================================================
 # Stare globală per cameră
@@ -199,15 +198,33 @@ for cam_id in camera_manager.get_active_camera_ids():
 # =============================================================================
 # Streaming MJPEG per cameră
 # =============================================================================
-JPEG_QUALITY = 40          # Redus pt 20 camere (lățime de bandă mai mică)
-STREAM_TARGET_FPS = 8      # Redus pt 20 camere (suficient pt monitorizare)
-encode_params = [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
+def get_stream_quality(num_cameras):
+    """
+    Calitate stream adaptivă în funcție de numărul de camere active.
+    Mai puține camere = calitate mai bună (lățime de bandă permite).
+    """
+    if num_cameras <= 3:
+        return 80, 20    # calitate maximă, 20 FPS
+    elif num_cameras <= 10:
+        return 60, 12    # calitate medie, 12 FPS
+    else:
+        return 40, 8     # compresie pentru multi-cameră, 8 FPS
 
 def gen(cam_id):
     """Generator MJPEG pentru o cameră specifică."""
-    stream_interval = 1.0 / STREAM_TARGET_FPS
+    last_num_cams = -1
+    jpeg_quality = 40
+    stream_fps = 8
 
     while True:
+        # Re-calibrează parametri stream când se schimbă numărul de camere
+        num_cams = camera_manager.active_count
+        if num_cams != last_num_cams:
+            last_num_cams = num_cams
+            jpeg_quality, stream_fps = get_stream_quality(num_cams)
+            encode_params = [cv2.IMWRITE_JPEG_QUALITY, jpeg_quality]
+
+        stream_interval = 1.0 / stream_fps
         stream_start = time.time()
 
         with state_lock:
@@ -422,7 +439,14 @@ if __name__ == '__main__':
     if not os.path.exists(save_dir):
         os.makedirs(save_dir, exist_ok=True)
 
-    print(f"\n📊 Model: {model_to_use}")
+    # Banner de pornire cu profilul hardware detectat
+    print("=" * 60)
+    print("  Safeguard Vision - Multi-Cameră")
+    print("=" * 60)
+    print(f"🖥️  Hardware: {hw['name']}")
+    print(f"⚡  Target: {hw['target_total_fps']} FPS total | "
+          f"imgsz: {hw['imgsz']} | INT8: {'da' if hw['supports_int8'] else 'nu'}")
+    print(f"📊 Model: {model_to_use}")
     print(f"📷 Camere active: {camera_manager.active_count}/{camera_manager.total_count}")
     print(f"🎯 FPS per cameră: {detector.get_fps_per_camera(camera_manager.active_count)}")
     print(f"🔌 WebSocket: activat")

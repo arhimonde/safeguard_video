@@ -7,6 +7,7 @@ import threading
 from datetime import datetime
 from collections import deque
 from database import log_incident
+from jetson_profile import detect_jetson_profile
 
 
 # =============================================================================
@@ -104,22 +105,35 @@ class PersonTracker:
 # =============================================================================
 
 class ObjectDetector:
-    def __init__(self, model_path='yolo11n.pt', imgsz=480, half=True):
+    def __init__(self, model_path='yolo11n.pt', imgsz=None, half=False, target_total_fps=None):
         """
         Detector optimizat pentru MULTI-CAMERĂ (până la 25):
         - YOLO11n pentru detectare persoane (model partajat)
         - HSV cu cluster analysis pentru PPE (CPU, zero cost GPU)
         - PersonTracker per cameră
         - FPS adaptiv: target_total_fps / num_cameras
+
+        Parametrii imgsz și target_total_fps se auto-detectează după hardware
+        dacă sunt lăsați None (vezi jetson_profile.py).
         """
+        # Detectare hardware o singură dată
+        self.hw_profile = detect_jetson_profile()
+
+        # Parametri din profil (dacă nu sunt specificați explicit)
+        if imgsz is None:
+            imgsz = self.hw_profile['imgsz']
+        if target_total_fps is None:
+            target_total_fps = self.hw_profile['target_total_fps']
+
         print(f"Se încarcă modelul: {model_path}...")
         self.is_tensorrt = model_path.endswith('.engine')
         self.imgsz = imgsz
         self.half = half
+        self.device = self.hw_profile['device']
 
         self.model = YOLO(model_path)
         print(f"Model încărcat. TensorRT: {self.is_tensorrt}, "
-              f"imgsz: {imgsz}, FP16: {half}")
+              f"imgsz: {imgsz}, FP16: {half}, device: {self.device}")
 
         self.classes_of_interest = [0]
         self.colors = {
@@ -133,10 +147,8 @@ class ObjectDetector:
         self.alert_cooldown = 5
         self._trackers_lock = threading.Lock()
 
-        # FPS adaptiv — optimizat pentru 20 camere pe AGX Orin
-        # YOLO11n + TensorRT INT8 = ~200 FPS pe AGX Orin 64GB
-        # 200 FPS / 20 camere = 10 FPS per cameră
-        self.target_total_fps = 200
+        # FPS adaptiv — adaptat la hardware-ul detectat
+        self.target_total_fps = target_total_fps
         self.last_frame_time = time.time()
 
         # Nuclee morfologice (pre-calculate)
@@ -325,7 +337,7 @@ class ObjectDetector:
 
         # YOLO inferență — doar persoane
         results = self.model(frame, verbose=False,
-                             imgsz=self.imgsz, half=self.half, device=0)
+                             imgsz=self.imgsz, half=self.half, device=self.device)
 
         raw_detections = []
         for r in results:
