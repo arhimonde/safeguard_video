@@ -9,10 +9,11 @@ DB_PATH = os.path.join(BASE_DIR, 'safeguard.db')
 
 
 class User(UserMixin):
-    def __init__(self, id, username, password_hash):
+    def __init__(self, id, username, password_hash, must_change_password=False):
         self.id = id
         self.username = username
         self.password_hash = password_hash
+        self.must_change_password = must_change_password
 
 
 def init_db():
@@ -45,6 +46,12 @@ def init_db():
             password TEXT NOT NULL
         )
     ''')
+
+    # Adaugă coloana must_change_password dacă nu există (migration)
+    try:
+        c.execute("ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass  # Coloana deja există
 
     conn.commit()
     conn.close()
@@ -116,10 +123,13 @@ def get_user_by_username(username):
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        c.execute('SELECT id, username, password FROM users WHERE username=?', (username,))
+        c.execute('SELECT id, username, password, must_change_password FROM users WHERE username=?', (username,))
         row = c.fetchone()
         conn.close()
-        return User(id=row[0], username=row[1], password_hash=row[2]) if row else None
+        if row:
+            mcp = bool(row[3]) if len(row) > 3 and row[3] is not None else False
+            return User(id=row[0], username=row[1], password_hash=row[2], must_change_password=mcp)
+        return None
     except Exception as e:
         print(f"Error get_user_by_username: {e}")
         return None
@@ -129,10 +139,29 @@ def get_user_by_id(user_id):
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        c.execute('SELECT id, username, password FROM users WHERE id=?', (user_id,))
+        c.execute('SELECT id, username, password, must_change_password FROM users WHERE id=?', (user_id,))
         row = c.fetchone()
         conn.close()
-        return User(id=row[0], username=row[1], password_hash=row[2]) if row else None
+        if row:
+            mcp = bool(row[3]) if len(row) > 3 and row[3] is not None else False
+            return User(id=row[0], username=row[1], password_hash=row[2], must_change_password=mcp)
+        return None
     except Exception as e:
         print(f"Error get_user_by_id: {e}")
         return None
+
+
+def change_password(user_id, new_password):
+    """Schimbă parola și marchează must_change_password=False."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        hashed = generate_password_hash(new_password)
+        c.execute('UPDATE users SET password=?, must_change_password=0 WHERE id=?',
+                  (hashed, user_id))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"Error change_password: {e}")
+        return False

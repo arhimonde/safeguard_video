@@ -1,11 +1,82 @@
 import json
 import os
+import stat
 import threading
 import time
+import hashlib
+import base64
 from camera import VideoCamera
 
 
 CAMERAS_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cameras.json')
+
+
+# =============================================================================
+# Criptare simplă pentru parolele RTSP (nu necesită pachete extra)
+# Folosește XOR cu cheie derivată din hash-ul sistemului — suficient pt
+# a nu stoca plaintext în cameras.json. NU e criptare militară,
+# dar elimină expunerea directă a credențialelor.
+# =============================================================================
+
+def _get_system_key():
+    """Generează o cheie deterministă din calea absolută a proiectului."""
+    return hashlib.sha256(CAMERAS_CONFIG_PATH.encode()).digest()
+
+
+def encrypt_rtsp_password(password):
+    """Criptează o parolă RTSP. Returnează string codificat base64."""
+    if not password:
+        return ''
+    key = _get_system_key()
+    pw_bytes = password.encode('utf-8')
+    encrypted = bytes(b ^ key[i % len(key)] for i, b in enumerate(pw_bytes))
+    return 'enc:' + base64.b64encode(encrypted).decode('ascii')
+
+
+def decrypt_rtsp_password(encrypted):
+    """Decriptează o parolă RTSP. Returnează plaintext."""
+    if not encrypted or not encrypted.startswith('enc:'):
+        return encrypted  # Nu e criptat (compatibilitate)
+    key = _get_system_key()
+    try:
+        pw_bytes = base64.b64decode(encrypted[4:])
+        decrypted = bytes(b ^ key[i % len(key)] for i, b in enumerate(pw_bytes))
+        return decrypted.decode('utf-8')
+    except Exception:
+        return encrypted  # Fallback: returnează ca-is
+
+
+def _encrypt_url_if_needed(url):
+    """Dacă URL conține parolă plaintext, o criptează."""
+    if not url or not isinstance(url, str):
+        return url
+    # Detectează rtsp://user:password@host
+    if '://' in url and '@' in url:
+        prefix, rest = url.split('://', 1)
+        if '@' in rest:
+            creds, host_part = rest.rsplit('@', 1)
+            if ':' in creds:
+                user, password = creds.split(':', 1)
+                # Verifică dacă parola e deja criptată
+                if not password.startswith('enc:'):
+                    encrypted_pw = encrypt_rtsp_password(password)
+                    return f"{prefix}://{user}:{encrypted_pw}@{host_part}"
+    return url
+
+
+def _decrypt_url(url):
+    """Decriptează parola din URL dacă e criptată."""
+    if not url or not isinstance(url, str):
+        return url
+    if '://' in url and '@' in url:
+        prefix, rest = url.split('://', 1)
+        if '@' in rest:
+            creds, host_part = rest.rsplit('@', 1)
+            if ':' in creds:
+                user, password = creds.split(':', 1)
+                decrypted_pw = decrypt_rtsp_password(password)
+                return f"{prefix}://{user}:{decrypted_pw}@{host_part}"
+    return url
 
 
 class CameraManager:
@@ -55,10 +126,18 @@ class CameraManager:
             self._save_config()
 
     def _save_config(self):
-        """Salvează configurația curentă în cameras.json."""
+        """Salvează configurația curentă în cameras.json (cu parole criptate)."""
         try:
+            # Criptează parolele înainte de salvare (copie, nu mută originalul)
+            config_to_save = []
+            for cam_cfg in self.config:
+                cfg_copy = dict(cam_cfg)
+                cfg_copy['url'] = _encrypt_url_if_needed(cfg_copy.get('url', ''))
+                config_to_save.append(cfg_copy)
             with open(self.config_path, 'w') as f:
-                json.dump(self.config, f, indent=4, ensure_ascii=False)
+                json.dump(config_to_save, f, indent=4, ensure_ascii=False)
+            # Restrânge permisiunile (doar owner poate citi)
+            os.chmod(self.config_path, stat.S_IRUSR | stat.S_IWUSR)
         except Exception as e:
             print(f"⚠️ Eroare salvare cameras.json: {e}")
 
@@ -96,7 +175,7 @@ class CameraManager:
 
         cam_id = cam_cfg['id']
         name = cam_cfg.get('name', f'Camera {cam_id}')
-        url = cam_cfg['url']
+        url = _decrypt_url(cam_cfg['url'])
 
         # Detectează tipul sursei
         if isinstance(url, str) and url.startswith('rtsp://'):
@@ -134,7 +213,7 @@ class CameraManager:
         cam_cfg = {
             'id': cam_id,
             'name': name,
-            'url': url,
+            'url': _encrypt_url_if_needed(url),
             'enabled': enabled
         }
         self.config.append(cam_cfg)

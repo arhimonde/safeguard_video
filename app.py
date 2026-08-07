@@ -12,15 +12,27 @@ from camera_manager import CameraManager
 from detector import ObjectDetector
 from jetson_profile import detect_jetson_profile
 from database import (init_db, get_recent_incidents, get_user_by_username,
-                      get_user_by_id)
+                      get_user_by_id, change_password)
 from werkzeug.security import check_password_hash
 import cv2
 import threading
 import time
 import os
+from collections import defaultdict
+from functools import wraps
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
+
+# Secret key persistent — nu se regenerează la restart
+_SECRET_KEY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.secret_key')
+if os.path.exists(_SECRET_KEY_PATH):
+    with open(_SECRET_KEY_PATH, 'rb') as f:
+        app.secret_key = f.read()
+else:
+    app.secret_key = os.urandom(24)
+    with open(_SECRET_KEY_PATH, 'wb') as f:
+        f.write(app.secret_key)
+    os.chmod(_SECRET_KEY_PATH, 0o600)
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
@@ -34,6 +46,13 @@ def load_user(user_id):
     return get_user_by_id(user_id)
 
 init_db()
+
+# Forcează schimbarea parolei la prima logare
+@app.before_request
+def enforce_password_change():
+    if current_user.is_authenticated and current_user.must_change_password:
+        if request.endpoint not in ('change_password', 'logout', 'static'):
+            return redirect(url_for('change_password'))
 
 # =============================================================================
 # CONFIGURARE MODEL YOLO
@@ -254,7 +273,29 @@ def gen(cam_id):
 # Rute Flask
 # =============================================================================
 
+# --- Rate limiting simplu pentru /login (fără dependențe externe) ---
+_login_attempts = defaultdict(list)  # {ip: [timestamp, ...]}
+_LOGIN_MAX_ATTEMPTS = 5
+_LOGIN_WINDOW = 60  # secunde
+
+
+def login_rate_limit(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        ip = request.remote_addr or 'unknown'
+        now = time.time()
+        # Curățăm încercările expirate
+        _login_attempts[ip] = [t for t in _login_attempts[ip] if now - t < _LOGIN_WINDOW]
+        if len(_login_attempts[ip]) >= _LOGIN_MAX_ATTEMPTS:
+            return render_template('login.html',
+                                   error="Prea multe încercări. Încearcă din nou peste un minut."), 429
+        _login_attempts[ip].append(now)
+        return f(*args, **kwargs)
+    return decorated
+
+
 @app.route('/login', methods=['GET', 'POST'])
+@login_rate_limit
 def login():
     if request.method == 'POST':
         username = request.form['username']
@@ -262,6 +303,8 @@ def login():
         user = get_user_by_username(username)
         if user and check_password_hash(user.password_hash, password):
             login_user(user)
+            if user.must_change_password:
+                return redirect(url_for('change_password'))
             return redirect(url_for('index'))
         return render_template('login.html', error="Usuario o contraseña incorrectos")
     return render_template('login.html')
@@ -272,6 +315,33 @@ def login():
 def logout():
     logout_user()
     return redirect(url_for('login'))
+
+
+@app.route('/change-password', methods=['GET', 'POST'])
+@login_required
+def change_password():
+    if request.method == 'POST':
+        current = request.form.get('current_password', '')
+        new_pw = request.form.get('new_password', '')
+        confirm = request.form.get('confirm_password', '')
+        if not current or not new_pw or not confirm:
+            return render_template('change_password.html',
+                                   error="Toate câmpurile sunt obligatorii")
+        if not check_password_hash(current_user.password_hash, current):
+            return render_template('change_password.html',
+                                   error="Parola curentă este incorectă")
+        if len(new_pw) < 8:
+            return render_template('change_password.html',
+                                   error="Parola nouă trebuie să aibă minim 8 caractere")
+        if new_pw != confirm:
+            return render_template('change_password.html',
+                                   error="Parolele nu coincid")
+        if change_password(current_user.id, new_pw):
+            return render_template('change_password.html',
+                                   success="Parolă schimbată cu succes!")
+        return render_template('change_password.html',
+                               error="Eroare la salvarea parolei")
+    return render_template('change_password.html')
 
 
 @app.route('/')
@@ -404,6 +474,38 @@ def toggle_monitor_camera(cam_id):
             return jsonify({'status': 'ok',
                             'monitoring': cameras_state[cam_id]['monitoring']})
     return jsonify({'error': 'Camera nu există'}), 404
+
+
+# =============================================================================
+# Health check (pentru systemd / monitoring extern)
+# =============================================================================
+
+_START_TIME = time.time()
+
+
+@app.route('/health')
+def health():
+    """Endpoint public pentru health check — nu necesită autentificare."""
+    uptime = round(time.time() - _START_TIME, 1)
+    info = {
+        'status': 'ok',
+        'uptime_seconds': uptime,
+        'active_cameras': camera_manager.active_count,
+        'total_cameras': camera_manager.total_count,
+        'max_cameras': hw['max_cameras'],
+        'hardware': hw['name'],
+        'model': model_to_use
+    }
+    # Adaugă info memorie dacă psutil e disponibil
+    try:
+        import psutil
+        mem = psutil.virtual_memory()
+        info['memory_percent'] = mem.percent
+        info['memory_used_gb'] = round(mem.used / (1024**3), 1)
+        info['cpu_percent'] = psutil.cpu_percent(interval=0.1)
+    except ImportError:
+        pass
+    return jsonify(info)
 
 
 # =============================================================================

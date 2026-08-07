@@ -1,0 +1,23 @@
+[Unit]
+Description=Safeguard Vision - PPE Detection Multi-Cameră
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=jetson
+WorkingDirectory=/home/jetson/safeguard_vision
+# Activează mediul CUDA pentru Jetson
+Environment=PATH=/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin
+Environment=LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/aarch64-linux-gnu/tegra
+Environment=CUDA_HOME=/usr/local/cuda
+# Pornește aplicația
+ExecStart=/home/jetson/safeguard_vision/venv/bin/python3 /home/jetson/safeguard_vision/app.py
+Restart=always
+RestartSec=5
+# Maxim performanță hardware
+ExecStartPre=/usr/sbin/nvpmodel -m 0
+ExecStartPre=/usr/bin/jetson_clocks
+
+[Install]
+WantedBy=multi-user.target

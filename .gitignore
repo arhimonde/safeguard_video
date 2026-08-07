@@ -39,7 +39,8 @@ loophole
 
 # Logs
 *.log
+logs/
 
-# Private documentation
-CONNECT_TO_JETSON.md
-TFG_DOCUMENTATION.md
+# Keys și config privat
+.secret_key
+config.json
