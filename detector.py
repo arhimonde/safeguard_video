@@ -158,6 +158,9 @@ class ObjectDetector:
         self.target_total_fps = target_total_fps
         self.last_frame_time = time.time()
 
+        # Motion pre-filter — cache frame-uri grayscale per cameră
+        self._prev_frames = {}
+
         # Nuclee morfologice (pre-calculate)
         self._morph_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         self._morph_kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
@@ -181,6 +184,7 @@ class ObjectDetector:
         with self._trackers_lock:
             self.trackers.pop(cam_id, None)
             self.alert_times.pop(cam_id, None)
+            self._prev_frames.pop(cam_id, None)
 
     def get_fps_per_camera(self, num_cameras):
         """Calculează FPS adaptiv per cameră."""
@@ -341,6 +345,29 @@ class ObjectDetector:
 
         h_img, w_img, _ = frame.shape
         danger_zone_x = int(w_img * 0.75)
+
+        # Motion pre-filter: dacă nu e mișcare semnificativă, sari YOLO
+        # (economisește 80-90% GPU pe camere goale — depozite noaptea)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (21, 21), 0)
+        prev_gray = self._prev_frames.get(cam_id)
+        if prev_gray is not None:
+            diff = cv2.absdiff(prev_gray, gray)
+            _, thresh = cv2.threshold(diff, 25, 255, cv2.THRESH_BINARY)
+            motion_ratio = cv2.countNonZero(thresh) / (h_img * w_img)
+            self._prev_frames[cam_id] = gray
+            if motion_ratio < 0.005:  # < 0.5% pixeli schimbați → fără mișcare
+                annotated_frame = frame.copy()
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                cv2.putText(annotated_frame, timestamp, (10, h_img - 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                cv2.putText(annotated_frame, "FPS: --", (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                stats = {'total_persons': 0, 'violations': 0,
+                         'alerts': [], 'camera_id': cam_id}
+                return annotated_frame, stats
+        else:
+            self._prev_frames[cam_id] = gray
 
         # YOLO inferență — doar persoane
         results = self.model(frame, verbose=False,
