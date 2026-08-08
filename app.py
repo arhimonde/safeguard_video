@@ -12,7 +12,8 @@ from camera_manager import CameraManager
 from detector import ObjectDetector
 from jetson_profile import detect_jetson_profile
 from database import (init_db, get_recent_incidents, get_user_by_username,
-                      get_user_by_id, change_password)
+                      get_user_by_id, change_password,
+                      delete_violations_by_date, delete_violations_by_hash)
 from werkzeug.security import check_password_hash
 import cv2
 import threading
@@ -190,6 +191,7 @@ def detection_thread_fn(cam_id):
             if cam_id in cameras_state:
                 cameras_state[cam_id]['annotated_frame'] = result_frame
                 cameras_state[cam_id]['stats'] = stats
+                cameras_state[cam_id]['frame_timestamp'] = time.time()
 
         broadcast_stats()
 
@@ -233,6 +235,7 @@ def gen(cam_id):
     last_num_cams = -1
     jpeg_quality = 40
     stream_fps = 8
+    import numpy as _np
 
     while True:
         # Re-calibrează parametri stream când se schimbă numărul de camere
@@ -248,6 +251,7 @@ def gen(cam_id):
         with state_lock:
             cam_state = cameras_state.get(cam_id)
             frame = cam_state['annotated_frame'] if cam_state else None
+            frame_ts = cam_state.get('frame_timestamp', 0) if cam_state else 0
 
         if frame is None:
             camera = camera_manager.get_camera(cam_id)
@@ -256,6 +260,26 @@ def gen(cam_id):
             if frame is None:
                 time.sleep(0.02)
                 continue
+
+        # NO SIGNAL: dacă frame-ul e > 3 secunde vechi, afișează overlay
+        frame_age = time.time() - frame_ts if frame_ts > 0 else 0
+        if frame_age > 3.0:
+            h, w = 480, 640
+            try:
+                h, w = frame.shape[:2]
+            except Exception:
+                pass
+            no_signal_frame = _np.zeros((h, w, 3), dtype=_np.uint8)
+            cv2.putText(no_signal_frame, "NO SIGNAL", (w // 2 - 100, h // 2),
+                        cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 3)
+            ret, jpeg = cv2.imencode('.jpg', no_signal_frame, encode_params)
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
+            elapsed = time.time() - stream_start
+            sleep_time = max(0, stream_interval - elapsed)
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+            continue
 
         ret, jpeg = cv2.imencode('.jpg', frame, encode_params)
         if not ret:
@@ -509,6 +533,75 @@ def health():
 
 
 # =============================================================================
+# GDPR endpoints + Auto-delete capturi
+# =============================================================================
+
+CAPTURE_RETENTION_DAYS = 30
+
+
+@app.route('/api/gdpr/delete-captures', methods=['POST'])
+@login_required
+def gdpr_delete_captures():
+    """Șterge capturi și log-uri dintr-un interval de date."""
+    from_date = request.json.get('from_date')
+    to_date = request.json.get('to_date')
+    if not from_date or not to_date:
+        return jsonify({'error': 'from_date și to_date sunt obligatorii'}), 400
+    deleted = delete_violations_by_date(from_date, to_date)
+    # Șterge și fișierele imagine din interval
+    import glob
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    capture_dir = os.path.join(base_dir, 'static/captures')
+    removed_files = 0
+    if os.path.isdir(capture_dir):
+        for f in glob.glob(os.path.join(capture_dir, '*.jpg')):
+            mtime = os.path.getmtime(f)
+            from_ts = time.mktime(time.strptime(from_date, '%Y-%m-%d'))
+            to_ts = time.mktime(time.strptime(to_date, '%Y-%m-%d')) + 86400
+            if from_ts <= mtime <= to_ts:
+                os.remove(f)
+                removed_files += 1
+    return jsonify({'deleted_logs': deleted, 'deleted_files': removed_files})
+
+
+@app.route('/api/gdpr/delete-person', methods=['POST'])
+@login_required
+def gdpr_delete_person():
+    """Șterge toate abaterile pentru un person_hash specific."""
+    person_hash = request.json.get('person_hash')
+    if not person_hash:
+        return jsonify({'error': 'person_hash este obligatoriu'}), 400
+    deleted = delete_violations_by_hash(person_hash)
+    return jsonify({'deleted': deleted})
+
+
+def _auto_delete_old_captures():
+    """Șterge capturi mai vechi de CAPTURE_RETENTION_DAYS. Rulează o dată pe zi."""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    capture_dir = os.path.join(base_dir, 'static/captures')
+    if not os.path.isdir(capture_dir):
+        return
+    cutoff = time.time() - (CAPTURE_RETENTION_DAYS * 86400)
+    removed = 0
+    for f in os.listdir(capture_dir):
+        if not f.endswith('.jpg'):
+            continue
+        filepath = os.path.join(capture_dir, f)
+        if os.path.getmtime(filepath) < cutoff:
+            os.remove(filepath)
+            removed += 1
+    if removed > 0:
+        print(f"🗑️ Auto-delete: {removed} capturi mai vechi de {CAPTURE_RETENTION_DAYS} zile șterse.")
+
+
+def _auto_delete_thread():
+    """Background thread pentru ștergerea automată a capturilor."""
+    while True:
+        _auto_delete_old_captures()
+        time.sleep(86400)  # verifică o dată pe zi
+
+
+# =============================================================================
 # WebSocket events
 # =============================================================================
 
@@ -540,6 +633,10 @@ if __name__ == '__main__':
     if not os.path.exists(save_dir):
         os.makedirs(save_dir, exist_ok=True)
 
+    # Pornire thread auto-delete capturi
+    t = threading.Thread(target=_auto_delete_thread, daemon=True)
+    t.start()
+
     # Banner de pornire cu profilul hardware detectat
     print("=" * 60)
     print("  Safeguard Vision - Multi-Cameră")
@@ -552,6 +649,7 @@ if __name__ == '__main__':
     print(f"📊 Model: {model_to_use}")
     print(f"🎯 FPS per cameră: {detector.get_fps_per_camera(camera_manager.active_count)}")
     print(f"🔌 WebSocket: activat")
+    print(f"🔒 GDPR: auto-delete capturi > {CAPTURE_RETENTION_DAYS} zile")
     print("=" * 60)
 
     socketio.run(app, host='0.0.0.0', port=5000,

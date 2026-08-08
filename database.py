@@ -1,6 +1,6 @@
 import sqlite3
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash
 from flask_login import UserMixin
 
@@ -53,9 +53,21 @@ def init_db():
     except sqlite3.OperationalError:
         pass  # Coloana deja există
 
+    # Tabelă istoric abateri (pentru sistemul anti-recidivă)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS violations_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            camera_id INTEGER,
+            timestamp TEXT NOT NULL,
+            violation_type TEXT NOT NULL,
+            person_hash TEXT,
+            severity TEXT DEFAULT 'warning'
+        )
+    ''')
+
     conn.commit()
     conn.close()
-    print("Bază de date inițializată (Incidente + Utilizatori).")
+    print("Bază de date inițializată (Incidente + Utilizatori + Abateri).")
     create_user("admin", "admin123")
 
 
@@ -165,3 +177,96 @@ def change_password(user_id, new_password):
     except Exception as e:
         print(f"Error change_password: {e}")
         return False
+
+
+# =============================================================================
+# Sistem anti-recidivă — violations_log
+# =============================================================================
+
+def log_violation(camera_id, violation_type, person_hash, severity='warning'):
+    """Loghează o abatere în violations_log."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        timestamp = datetime.now().isoformat()
+        c.execute(
+            'INSERT INTO violations_log (camera_id, timestamp, violation_type, person_hash, severity) '
+            'VALUES (?, ?, ?, ?, ?)',
+            (camera_id, timestamp, violation_type, person_hash, severity)
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Error log_violation: {e}")
+
+
+def count_violations_by_hash(person_hash, hours=1):
+    """
+    Numără abaterile unui person_hash în ultimele X ore.
+    Used pentru escaladare: 1=warning, 2=danger, 3+=critical.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        cutoff = (datetime.now() - timedelta(hours=hours)).isoformat()
+        c.execute(
+            'SELECT COUNT(*) FROM violations_log WHERE person_hash=? AND timestamp > ?',
+            (person_hash, cutoff)
+        )
+        count = c.fetchone()[0]
+        conn.close()
+        return count
+    except Exception as e:
+        print(f"Error count_violations_by_hash: {e}")
+        return 0
+
+
+def delete_violations_by_date(from_date, to_date):
+    """GDPR: Șterge abaterile dintr-un interval de date."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('DELETE FROM violations_log WHERE timestamp >= ? AND timestamp <= ?',
+                  (from_date, to_date))
+        deleted = c.rowcount
+        conn.commit()
+        conn.close()
+        return deleted
+    except Exception as e:
+        print(f"Error delete_violations_by_date: {e}")
+        return 0
+
+
+def delete_violations_by_hash(person_hash):
+    """GDPR: Șterge toate abaterile pentru un person_hash specific."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('DELETE FROM violations_log WHERE person_hash=?', (person_hash,))
+        deleted = c.rowcount
+        conn.commit()
+        conn.close()
+        return deleted
+    except Exception as e:
+        print(f"Error delete_violations_by_hash: {e}")
+        return 0
+
+
+def get_violation_stats(days=7):
+    """Statistici abateri per zi (pentru dashboard)."""
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        c.execute(
+            'SELECT DATE(timestamp) as day, COUNT(*) as count, severity '
+            'FROM violations_log WHERE timestamp > ? '
+            'GROUP BY day, severity ORDER BY day',
+            (cutoff,)
+        )
+        rows = c.fetchall()
+        conn.close()
+        return [{'date': r[0], 'count': r[1], 'severity': r[2]} for r in rows]
+    except Exception as e:
+        print(f"Error get_violation_stats: {e}")
+        return []

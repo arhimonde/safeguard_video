@@ -6,7 +6,7 @@ import os
 import threading
 from datetime import datetime
 from collections import deque
-from database import log_incident
+from database import log_incident, log_violation, count_violations_by_hash
 from jetson_profile import detect_jetson_profile
 
 
@@ -66,14 +66,20 @@ class PersonTracker:
 
             if tid in self.tracks:
                 status = self.tracks[tid].get('status', self.ACTIVE)
+                person_hash = self.tracks[tid].get('hash', None)
             else:
                 status = self.ACTIVE
+                # Hash bazat pe poziția aproximativă a persoanei în cadru
+                cx = (bbox[0] + bbox[2]) // 2
+                cy = (bbox[1] + bbox[3]) // 2
+                person_hash = f"{cx//50}_{cy//50}"
 
             self.tracks[tid] = {
                 'bbox': bbox, 'missed': 0,
                 'history': self.tracks.get(tid, {}).get(
                     'history', deque(maxlen=self.history_length)),
                 'status': status,
+                'hash': person_hash,
             }
             self.tracks[tid]['history'].append((has_helmet, has_vest))
 
@@ -426,7 +432,20 @@ class ObjectDetector:
         cv2.putText(annotated_frame, f"FPS: {int(fps)}", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-        # Alertă cu soft tracking per cameră
+        # Overlay servei legal — "ZONĂ MONITORIZATĂ — PPE OBLIGATORIU"
+        overlay_text = "ZONA MONITORIZADA - PPE OBLIGATORIU"
+        text_size = cv2.getTextSize(overlay_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)[0]
+        text_x = (w_img - text_size[0]) // 2
+        text_y = h_img - 10
+        # Fundal semi-transparent
+        cv2.rectangle(annotated_frame,
+                       (text_x - 8, text_y - text_size[1] - 6),
+                       (text_x + text_size[0] + 8, text_y + 4),
+                       (0, 0, 0), -1)
+        cv2.putText(annotated_frame, overlay_text, (text_x, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
+
+        # Alertă cu soft tracking per cameră + escaladare anti-recidivă
         if current_violations > 0:
             last_alert = self.alert_times.get(cam_id, 0)
             if now - last_alert > self.alert_cooldown:
@@ -435,6 +454,18 @@ class ObjectDetector:
                 self.alert_times[cam_id] = now
                 for tid in alerted_tids:
                     tracker.mark_alerted(tid)
+                    # Sistem escaladare: loghează abaterea + verifică recidiva
+                    track = tracker.tracks.get(tid)
+                    if track:
+                        person_hash = track.get('hash', str(tid))
+                        prev_count = count_violations_by_hash(person_hash, hours=1)
+                        if prev_count == 0:
+                            severity = 'warning'   # 1a abatere
+                        elif prev_count == 1:
+                            severity = 'danger'    # 2a abatere (recidivă)
+                        else:
+                            severity = 'critical'  # 3+ abateri
+                        log_violation(cam_id, v_type, person_hash, severity)
 
         return annotated_frame, stats
 
