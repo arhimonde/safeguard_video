@@ -35,7 +35,19 @@ else:
         f.write(app.secret_key)
     os.chmod(_SECRET_KEY_PATH, 0o600)
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+# CORS restrictiv pe WebSocket — citește origins din config.json
+def _get_allowed_origins():
+    import json as _json
+    try:
+        cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+        with open(cfg_path, 'r') as f:
+            cfg = _json.load(f)
+            return cfg.get('allowed_origins', [])
+    except (FileNotFoundError, _json.JSONDecodeError):
+        pass
+    return ["http://localhost:5000", "http://127.0.0.1:5000"]
+
+socketio = SocketIO(app, cors_allowed_origins=_get_allowed_origins(), async_mode='threading')
 
 # Sesiuni utilizator
 login_manager = LoginManager()
@@ -599,6 +611,39 @@ def _auto_delete_thread():
     while True:
         _auto_delete_old_captures()
         time.sleep(86400)  # verifică o dată pe zi
+
+
+# =============================================================================
+# Export rapoarte + Statistici istorice
+# =============================================================================
+import csv
+import io as _io
+
+@app.route('/api/report')
+@login_required
+def export_report():
+    """Export incidente ca CSV sau JSON."""
+    from database import get_recent_incidents
+    fmt = request.args.get('format', 'json')
+    limit = int(request.args.get('limit', 1000))
+    incidents = get_recent_incidents(limit=limit)
+    if fmt == 'csv':
+        output = _io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=['id', 'timestamp', 'type', 'image_path', 'details', 'camera_id'])
+        writer.writeheader()
+        writer.writerows(incidents)
+        return Response(output.getvalue(), mimetype='text/csv',
+                        headers={'Content-Disposition': 'attachment; filename=safeguard_report.csv'})
+    return jsonify(incidents)
+
+
+@app.route('/api/stats/violations')
+@login_required
+def violation_stats():
+    """Statistici abateri pentru dashboard (ultimele N zile)."""
+    from database import get_violation_stats
+    days = int(request.args.get('days', 7))
+    return jsonify(get_violation_stats(days=days))
 
 
 # =============================================================================

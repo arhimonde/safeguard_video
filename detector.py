@@ -8,6 +8,7 @@ from datetime import datetime
 from collections import deque
 from database import log_incident, log_violation, count_violations_by_hash
 from jetson_profile import detect_jetson_profile
+from notifier import send_alert
 
 
 # =============================================================================
@@ -466,6 +467,18 @@ class ObjectDetector:
                         else:
                             severity = 'critical'  # 3+ abateri
                         log_violation(cam_id, v_type, person_hash, severity)
+                        # Notificare externă doar la severity critical (3+ abateri)
+                        if severity == 'critical':
+                            base_dir = os.path.dirname(os.path.abspath(__file__))
+                            img_path = os.path.join(base_dir, 'static/captures',
+                                                    v_type.replace(' ', '_')[:20])
+                            send_alert(
+                                f"Cam {cam_id}: {v_type}",
+                                f"REINCIDENTE — persoana detectata cu 3+ abateri\n"
+                                f"Camera: {cam_id}\nTipo: {v_type}\nSeveridad: CRITICAL",
+                                image_path=img_path if os.path.exists(img_path) else None,
+                                severity='critical'
+                            )
 
         return annotated_frame, stats
 

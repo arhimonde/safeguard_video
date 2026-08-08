@@ -17,6 +17,8 @@
             <div class="header-controls">
                 <div class="status-badge" id="ws-status" style="background: #555;">CONECTANDO...</div>
                 <div class="status-badge" id="cam-count">0 CÁMARAS</div>
+                <span class="user-badge">👤 {{ current_user.username }}</span>
+                <a href="{{ url_for('change_password') }}" class="logout-btn" style="background:#30363d;">Contraseña</a>
                 <a href="{{ url_for('logout') }}" class="logout-btn">Cerrar Sesión</a>
             </div>
         </header>
@@ -57,6 +59,13 @@
                     <ul id="alerts-list">
                         <li class="placeholder" style="color: var(--text-secondary); font-size: 0.85rem;">Sin alertas recientes...</li>
                     </ul>
+                </div>
+
+                <!-- Export/Stats -->
+                <div class="alerts-section" style="margin-top: 15px;">
+                    <h3>📊 Exportar</h3>
+                    <a href="/api/report?format=csv" class="logout-btn" style="display:block;text-align:center;margin-bottom:8px;">Descargar CSV</a>
+                    <a href="/api/report?format=json" class="logout-btn" style="display:block;text-align:center;background:#30363d;">Descargar JSON</a>
                 </div>
             </aside>
         </main>

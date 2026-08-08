@@ -1,0 +1,10 @@
+{
+  "telegram_bot_token": "",
+  "telegram_chat_id": "",
+  "smtp_host": "",
+  "smtp_port": 587,
+  "smtp_user": "",
+  "smtp_pass": "",
+  "alert_email": "",
+  "allowed_origins": ["http://localhost:5000", "http://127.0.0.1:5000"]
+}
