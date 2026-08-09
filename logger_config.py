@@ -18,12 +18,10 @@ LOG_PATH = os.path.join(LOG_DIR, 'safeguard.log')
 _FORMAT = '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
 _DATEFMT = '%Y-%m-%d %H:%M:%S'
 
-# Configurare root logger
 _handler = RotatingFileHandler(
     LOG_PATH, maxBytes=5*1024*1024, backupCount=3, encoding='utf-8')
 _handler.setFormatter(logging.Formatter(_FORMAT, _DATEFMT))
 
-# Păstrăm și output pe consolă pentru depanare
 _console = logging.StreamHandler()
 _console.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(message)s', _DATEFMT))
 

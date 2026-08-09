@@ -9,12 +9,9 @@ hardware-ului.
 """
 import os
 
-# =============================================================================
 # Tabel profiluri (bazat pe TOPS oficiali NVIDIA + benchmark-uri YOLO11n)
-# =============================================================================
 # Cheie: string care apare în numele modelului Jetson
 # Valoare: dict cu parametrii optimi
-# =============================================================================
 _PROFILES = [
     # (pattern, name, target_total_fps, imgsz, supports_int8, max_cameras)
     {'pattern': 'orin agx',         'name': 'AGX Orin 64GB',  'fps': 200, 'imgsz': 480, 'int8': True,  'max_cam': 20},

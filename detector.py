@@ -11,9 +11,7 @@ from jetson_profile import detect_jetson_profile
 from notifier import send_alert
 
 
-# =============================================================================
 # Person Tracker — ID-uri stabile + soft tracking per cameră
-# =============================================================================
 
 class PersonTracker:
     """
@@ -107,9 +105,7 @@ class PersonTracker:
         self.tracks = {}; self.next_id = 0
 
 
-# =============================================================================
 # Object Detector — YOLO11n + HSV PPE (optimizat pentru 20 camere)
-# =============================================================================
 
 class ObjectDetector:
     def __init__(self, model_path='yolo11n.pt', imgsz=None, half=False, target_total_fps=None):

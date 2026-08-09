@@ -179,9 +179,7 @@ def change_password(user_id, new_password):
         return False
 
 
-# =============================================================================
 # Sistem anti-recidivă — violations_log
-# =============================================================================
 
 def log_violation(camera_id, violation_type, person_hash, severity='warning'):
     """Loghează o abatere în violations_log."""

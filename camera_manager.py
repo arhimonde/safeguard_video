@@ -11,12 +11,10 @@ from camera import VideoCamera
 CAMERAS_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cameras.json')
 
 
-# =============================================================================
 # Criptare simplă pentru parolele RTSP (nu necesită pachete extra)
 # Folosește XOR cu cheie derivată din hash-ul sistemului — suficient pt
 # a nu stoca plaintext în cameras.json. NU e criptare militară,
 # dar elimină expunerea directă a credențialelor.
-# =============================================================================
 
 def _get_system_key():
     """Generează o cheie deterministă din calea absolută a proiectului."""

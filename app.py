@@ -2,7 +2,6 @@
 # Pentru a accesa serverul de oriunde:
 # 1. Pornește tunelul: python3 loophole_tunnel.py
 # 2. Folosește URL-ul .loophole.site generat.
-# --------------------------------
 from flask import (Flask, render_template, Response, jsonify,
                    request, redirect, url_for)
 from flask_login import (LoginManager, login_user, login_required,
@@ -49,7 +48,6 @@ def _get_allowed_origins():
 
 socketio = SocketIO(app, cors_allowed_origins=_get_allowed_origins(), async_mode='threading')
 
-# Sesiuni utilizator
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
@@ -67,9 +65,7 @@ def enforce_password_change():
         if request.endpoint not in ('change_password', 'logout', 'static'):
             return redirect(url_for('change_password'))
 
-# =============================================================================
 # CONFIGURARE MODEL YOLO
-# =============================================================================
 # Alege mărimea modelului în funcție de scenariu:
 #
 #   'n' (nano)   → MAX camere (25+). Cea mai rapidă. Recomandat pt multi-camerá.
@@ -80,13 +76,10 @@ def enforce_password_change():
 #
 # Format preferat: TensorRT (.engine) dacă există, altfel PyTorch (.pt)
 # CONVERSIE INT8: rulează `bash convert_to_tensorrt.sh` pentru 2x mai multă viteză
-# =============================================================================
 YOLO_VERSION = 'yolo11'
 YOLO_SIZE = 'n'           # 'n', 's', 'm', 'l', 'x'
 
-# =============================================================================
 # Inițializare Camera Manager + Detector
-# =============================================================================
 # Detectare hardware — parametri se adaptează automat (Jetson / GPU / CPU)
 hw = detect_jetson_profile()
 camera_manager = CameraManager(max_cameras=hw['max_cameras'])
@@ -96,9 +89,7 @@ model_to_use = f"{model_base}.engine" if os.path.exists(f"{model_base}.engine") 
 # half=False: modelul .engine (INT8/FP16) e deja optimizat; FP16 forțat ar cauza eroare pe INT8
 detector = ObjectDetector(model_path=model_to_use, half=False)
 
-# =============================================================================
 # Stare globală per cameră
-# =============================================================================
 # {cam_id: {'annotated_frame': np.array, 'stats': dict, 'monitoring': bool}}
 cameras_state = {}
 state_lock = threading.Lock()
@@ -113,13 +104,10 @@ def init_camera_state(cam_id):
             'monitoring': True
         }
 
-# Inițializează starea pentru toate camerele existente
 for cam_id in camera_manager.get_active_camera_ids():
     init_camera_state(cam_id)
 
-# =============================================================================
 # WebSocket broadcast
-# =============================================================================
 _last_ws_broadcast = 0
 _ws_broadcast_interval = 1.0
 
@@ -154,9 +142,7 @@ def broadcast_stats():
         'cameras': cameras_info
     }, namespace='/monitor')
 
-# =============================================================================
 # Thread detecție per cameră
-# =============================================================================
 def detection_thread_fn(cam_id):
     """
     Thread dedicat pentru o cameră.
@@ -222,14 +208,11 @@ def start_detection_thread(cam_id):
     print(f"▶️ Thread detecție pornit pentru camera {cam_id}")
     return t
 
-# Pornește thread-uri pentru toate camerele inițiale
 _detection_threads = {}
 for cam_id in camera_manager.get_active_camera_ids():
     _detection_threads[cam_id] = start_detection_thread(cam_id)
 
-# =============================================================================
 # Streaming MJPEG per cameră
-# =============================================================================
 def get_stream_quality(num_cameras):
     """
     Calitate stream adaptivă în funcție de numărul de camere active.
@@ -305,9 +288,7 @@ def gen(cam_id):
         if sleep_time > 0:
             time.sleep(sleep_time)
 
-# =============================================================================
 # Rute Flask
-# =============================================================================
 
 # --- Rate limiting simplu pentru /login (fără dependențe externe) ---
 _login_attempts = defaultdict(list)  # {ip: [timestamp, ...]}
@@ -397,7 +378,6 @@ def video_feed(cam_id):
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
-# ---- API: Stats ----
 
 @app.route('/api/stats')
 @login_required
@@ -435,7 +415,6 @@ def get_camera_stats(cam_id):
     })
 
 
-# ---- API: Camera Management ----
 
 @app.route('/api/cameras')
 @login_required
@@ -512,9 +491,7 @@ def toggle_monitor_camera(cam_id):
     return jsonify({'error': 'Camera nu există'}), 404
 
 
-# =============================================================================
 # Health check (pentru systemd / monitoring extern)
-# =============================================================================
 
 _START_TIME = time.time()
 
@@ -544,9 +521,7 @@ def health():
     return jsonify(info)
 
 
-# =============================================================================
 # GDPR endpoints + Auto-delete capturi
-# =============================================================================
 
 CAPTURE_RETENTION_DAYS = 30
 
@@ -613,9 +588,7 @@ def _auto_delete_thread():
         time.sleep(86400)  # verifică o dată pe zi
 
 
-# =============================================================================
 # Export rapoarte + Statistici istorice
-# =============================================================================
 import csv
 import io as _io
 
@@ -646,9 +619,7 @@ def violation_stats():
     return jsonify(get_violation_stats(days=days))
 
 
-# =============================================================================
 # WebSocket events
-# =============================================================================
 
 @socketio.on('connect', namespace='/monitor')
 def ws_connect():
