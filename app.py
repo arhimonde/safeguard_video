@@ -644,6 +644,14 @@ def ws_disconnect():
 
 
 if __name__ == '__main__':
+    from license import check_license_noninteractive, check_license
+
+    # Verifică licență — non-interactiv (systemd/env var) sau interactiv
+    if not check_license_noninteractive():
+        if not check_license():
+            print("❌ Acces refuzat. Aplicația nu poate porni fără cod de acces.")
+            sys.exit(1)
+
     base_dir = os.path.dirname(os.path.abspath(__file__))
     save_dir = os.path.join(base_dir, 'static/captures')
     if not os.path.exists(save_dir):

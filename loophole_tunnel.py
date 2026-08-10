@@ -64,6 +64,12 @@ def start_loophole():
         return None, None
 
 if __name__ == "__main__":
+    from license import check_license_noninteractive, check_license
+    if not check_license_noninteractive():
+        if not check_license():
+            print("Acces refuzat.")
+            sys.exit(1)
+
     print("========================================")
     print("   Safeguard Vision - Remote Access     ")
     print("========================================\n")

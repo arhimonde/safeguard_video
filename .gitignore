@@ -43,4 +43,8 @@ logs/
 
 # Keys și config privat
 .secret_key
+.license
 config.json
+
+# Backup-uri ofuscare PyArmor
+*.py.bak
