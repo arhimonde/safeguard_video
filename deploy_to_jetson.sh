@@ -4,7 +4,7 @@
 # IMPORTANT: Update these values with your Jetson details
 JETSON_USER="georgegabor"
 JETSON_IP="192.168.1.223"
-REMOTE_PATH="~/safeguard_vision"
+REMOTE_PATH="~/safeguard_vision_alpha"
 # ---------------------
 
 echo "🚀 Starting deployment to Jetson Orin Nano ($JETSON_IP)..."

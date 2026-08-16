@@ -3,7 +3,7 @@
 # --- CONFIGURACIÓN ---
 JETSON_USER="georgegabor"
 JETSON_IP="192.168.1.223"
-REMOTE_PATH="~/safeguard_vision"
+REMOTE_PATH="~/safeguard_vision_alpha"
 JETSON_PASS="1" 
 # ---------------------
 

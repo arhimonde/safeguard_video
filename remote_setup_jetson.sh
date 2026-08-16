@@ -3,7 +3,7 @@
 echo "⚙️  Configurando entorno de ALTO RENDIMIENTO en Jetson Orin Nano (JetPack 6.2 / CUDA 12.6)..."
 
 # Navegar al directorio del proyecto
-cd ~/safeguard_vision
+cd ~/safeguard_vision_alpha
 
 # 1. Instalar librerías de sistema ESENCIALES para CUDA 12 (Nombres directos para JP 6.2)
 echo "Instalando/Reparando librerías de sistema NVIDIA..."
