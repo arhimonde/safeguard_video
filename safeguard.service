@@ -1,5 +1,5 @@
 [Unit]
-Description=Safeguard Vision - PPE Detection Multi-Cameră
+Description=Safeguard Vision Alpha - PPE Detection Multi-Cameră
 After=network-online.target
 Wants=network-online.target
 

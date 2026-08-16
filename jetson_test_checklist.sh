@@ -12,7 +12,7 @@ ok() { echo "✅ $1"; PASS=$((PASS+1)); }
 ko() { echo "❌ $1"; FAIL=$((FAIL+1)); }
 
 echo "========================================"
-echo "  SAFEGUARD VISION — CHECKLIST JETSON"
+echo "  SAFEGUARD VISION ALPHA — CHECKLIST JETSON"
 echo "========================================"
 echo ""
 

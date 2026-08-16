@@ -1,7 +1,4 @@
-# --- ACCES REMOT (OPȚIONAL) ---
-# Pentru a accesa serverul de oriunde:
-# 1. Pornește tunelul: python3 loophole_tunnel.py
-# 2. Folosește URL-ul .loophole.site generat.
+# Safeguard Vision Alpha — Multi-Camera PPE Detection
 from flask import (Flask, render_template, Response, jsonify,
                    request, redirect, url_for)
 from flask_login import (LoginManager, login_user, login_required,
@@ -66,36 +63,22 @@ def enforce_password_change():
             return redirect(url_for('change_password'))
 
 # CONFIGURARE MODEL YOLO
-# Alege mărimea modelului în funcție de scenariu:
-#
-#   'n' (nano)   → MAX camere (25+). Cea mai rapidă. Recomandat pt multi-camerá.
-#   's' (small)  → 5-8 camere. Echilibru viteză/precizie.
-#   'm' (medium) → 3-4 camere. Precizie mai bună la distanță.
-#   'l' (large)  → 1-2 camere. Precizie maximă, mai lent.
-#   'x' (xlarge) → 1 cameră. Cea mai precisă, cea mai lentă.
-#
 # Format preferat: TensorRT (.engine) dacă există, altfel PyTorch (.pt)
 # CONVERSIE INT8: rulează `bash convert_to_tensorrt.sh` pentru 2x mai multă viteză
 YOLO_VERSION = 'yolo11'
 YOLO_SIZE = 'n'           # 'n', 's', 'm', 'l', 'x'
 
-# Inițializare Camera Manager + Detector
-# Detectare hardware — parametri se adaptează automat (Jetson / GPU / CPU)
 hw = detect_jetson_profile()
 camera_manager = CameraManager(max_cameras=hw['max_cameras'])
 
 model_base = f"{YOLO_VERSION}{YOLO_SIZE}"
 model_to_use = f"{model_base}.engine" if os.path.exists(f"{model_base}.engine") else f"{model_base}.pt"
-# half=False: modelul .engine (INT8/FP16) e deja optimizat; FP16 forțat ar cauza eroare pe INT8
 detector = ObjectDetector(model_path=model_to_use, half=False)
 
-# Stare globală per cameră
-# {cam_id: {'annotated_frame': np.array, 'stats': dict, 'monitoring': bool}}
 cameras_state = {}
 state_lock = threading.Lock()
 
 def init_camera_state(cam_id):
-    """Inițializează starea pentru o cameră nouă."""
     with state_lock:
         cameras_state[cam_id] = {
             'annotated_frame': None,
@@ -112,7 +95,6 @@ _last_ws_broadcast = 0
 _ws_broadcast_interval = 1.0
 
 def broadcast_stats():
-    """Trimite stats agregate (toate camerele) prin WebSocket."""
     global _last_ws_broadcast
     now = time.time()
     if now - _last_ws_broadcast < _ws_broadcast_interval:
@@ -123,6 +105,7 @@ def broadcast_stats():
     total_persons = 0
     total_violations = 0
     all_alerts = []
+    cam_stats_map = {}
 
     with state_lock:
         for cam_id, state in cameras_state.items():
@@ -131,6 +114,16 @@ def broadcast_stats():
             total_violations += stats.get('violations', 0)
             for alert in stats.get('alerts', []):
                 all_alerts.append(f"[Cam {cam_id}] {alert}")
+            cam_stats_map[str(cam_id)] = {
+                'total_persons': stats.get('total_persons', 0),
+                'violations': stats.get('violations', 0)
+            }
+
+    # Adaugă stats per-cameră în cameras_info
+    for cam in cameras_info:
+        cid = str(cam.get('id', ''))
+        if cid in cam_stats_map:
+            cam['stats'] = cam_stats_map[cid]
 
     db_incidents = get_recent_incidents(10)
 
@@ -144,10 +137,6 @@ def broadcast_stats():
 
 # Thread detecție per cameră
 def detection_thread_fn(cam_id):
-    """
-    Thread dedicat pentru o cameră.
-    FPS adaptiv în funcție de numărul total de camere active.
-    """
     while True:
         num_cams = camera_manager.active_count
         target_fps = detector.get_fps_per_camera(num_cams)
@@ -156,7 +145,7 @@ def detection_thread_fn(cam_id):
 
         camera = camera_manager.get_camera(cam_id)
         if camera is None:
-            # Cameră eliminată — ieșim
+            # Cameră eliminată
             print(f"🛑 Thread detecție oprit pentru camera {cam_id}")
             return
 
@@ -201,7 +190,6 @@ def detection_thread_fn(cam_id):
 
 
 def start_detection_thread(cam_id):
-    """Pornește thread-ul de detecție pentru o cameră."""
     init_camera_state(cam_id)
     t = threading.Thread(target=detection_thread_fn, args=(cam_id,), daemon=True)
     t.start()
@@ -214,10 +202,6 @@ for cam_id in camera_manager.get_active_camera_ids():
 
 # Streaming MJPEG per cameră
 def get_stream_quality(num_cameras):
-    """
-    Calitate stream adaptivă în funcție de numărul de camere active.
-    Mai puține camere = calitate mai bună (lățime de bandă permite).
-    """
     if num_cameras <= 3:
         return 80, 20    # calitate maximă, 20 FPS
     elif num_cameras <= 10:
@@ -226,7 +210,6 @@ def get_stream_quality(num_cameras):
         return 40, 8     # compresie pentru multi-cameră, 8 FPS
 
 def gen(cam_id):
-    """Generator MJPEG pentru o cameră specifică."""
     last_num_cams = -1
     jpeg_quality = 40
     stream_fps = 8
@@ -257,6 +240,7 @@ def gen(cam_id):
                 continue
 
         # NO SIGNAL: dacă frame-ul e > 3 secunde vechi, afișează overlay
+        # frame_ts=0 înseamnă că nu s-a primit încă niciun frame de la detecție
         frame_age = time.time() - frame_ts if frame_ts > 0 else 0
         if frame_age > 3.0:
             h, w = 480, 640
@@ -288,15 +272,14 @@ def gen(cam_id):
         if sleep_time > 0:
             time.sleep(sleep_time)
 
-# Rute Flask
-
-# --- Rate limiting simplu pentru /login (fără dependențe externe) ---
-_login_attempts = defaultdict(list)  # {ip: [timestamp, ...]}
+# Rate limiting simplu pentru /login
+_login_attempts = defaultdict(list)
 _LOGIN_MAX_ATTEMPTS = 5
 _LOGIN_WINDOW = 60  # secunde
 
 
 def login_rate_limit(f):
+    """Max 5 încercări per IP per minut."""
     @wraps(f)
     def decorated(*args, **kwargs):
         ip = request.remote_addr or 'unknown'
@@ -371,6 +354,7 @@ def index():
 @app.route('/video_feed/<int:cam_id>')
 @login_required
 def video_feed(cam_id):
+    """Stream MJPEG per cameră."""
     camera = camera_manager.get_camera(cam_id)
     if camera is None:
         return "Cámara no disponible", 404
@@ -382,7 +366,6 @@ def video_feed(cam_id):
 @app.route('/api/stats')
 @login_required
 def get_stats():
-    """Stats agregate (toate camerele)."""
     cameras_info = camera_manager.get_all_cameras_info()
     total_persons = 0
     total_violations = 0
@@ -403,7 +386,6 @@ def get_stats():
 @app.route('/api/camera/<int:cam_id>/stats')
 @login_required
 def get_camera_stats(cam_id):
-    """Stats pentru o cameră specifică."""
     with state_lock:
         cam_state = cameras_state.get(cam_id)
         if cam_state is None:
@@ -419,14 +401,12 @@ def get_camera_stats(cam_id):
 @app.route('/api/cameras')
 @login_required
 def list_cameras():
-    """Lista toate camerele cu status."""
     return jsonify({'cameras': camera_manager.get_all_cameras_info()})
 
 
 @app.route('/api/camera/add', methods=['POST'])
 @login_required
 def add_camera():
-    """Adaugă o cameră nouă la runtime."""
     data = request.json
     name = data.get('name', f'Camera nouă')
     url = data.get('url')
@@ -448,17 +428,14 @@ def add_camera():
 @app.route('/api/camera/<int:cam_id>/toggle', methods=['POST'])
 @login_required
 def toggle_camera(cam_id):
-    """Activează/dezactivează o cameră."""
     new_state = camera_manager.toggle_camera(cam_id)
     if new_state is None:
         return jsonify({'error': 'Camera nu există'}), 404
 
     if new_state:
-        # Reactivată — pornim thread detecție
         if cam_id not in _detection_threads or not _detection_threads[cam_id].is_alive():
             _detection_threads[cam_id] = start_detection_thread(cam_id)
     else:
-        # Dezactivată — oprim thread
         if cam_id in cameras_state:
             with state_lock:
                 cameras_state[cam_id]['monitoring'] = False
@@ -469,7 +446,6 @@ def toggle_camera(cam_id):
 @app.route('/api/camera/<int:cam_id>/remove', methods=['POST'])
 @login_required
 def remove_camera(cam_id):
-    """Șterge o cameră."""
     camera_manager.remove_camera(cam_id)
     detector.remove_tracker(cam_id)
     with state_lock:
@@ -480,7 +456,6 @@ def remove_camera(cam_id):
 @app.route('/api/camera/<int:cam_id>/monitor', methods=['POST'])
 @login_required
 def toggle_monitor_camera(cam_id):
-    """Pauză/reluare monitorizare pentru o cameră."""
     data = request.json
     action = data.get('action')
     with state_lock:
@@ -491,14 +466,12 @@ def toggle_monitor_camera(cam_id):
     return jsonify({'error': 'Camera nu există'}), 404
 
 
-# Health check (pentru systemd / monitoring extern)
-
+# Health check
 _START_TIME = time.time()
 
 
 @app.route('/health')
 def health():
-    """Endpoint public pentru health check — nu necesită autentificare."""
     uptime = round(time.time() - _START_TIME, 1)
     info = {
         'status': 'ok',
@@ -522,20 +495,17 @@ def health():
 
 
 # GDPR endpoints + Auto-delete capturi
-
 CAPTURE_RETENTION_DAYS = 30
 
 
 @app.route('/api/gdpr/delete-captures', methods=['POST'])
 @login_required
 def gdpr_delete_captures():
-    """Șterge capturi și log-uri dintr-un interval de date."""
     from_date = request.json.get('from_date')
     to_date = request.json.get('to_date')
     if not from_date or not to_date:
         return jsonify({'error': 'from_date și to_date sunt obligatorii'}), 400
     deleted = delete_violations_by_date(from_date, to_date)
-    # Șterge și fișierele imagine din interval
     import glob
     base_dir = os.path.dirname(os.path.abspath(__file__))
     capture_dir = os.path.join(base_dir, 'static/captures')
@@ -554,7 +524,6 @@ def gdpr_delete_captures():
 @app.route('/api/gdpr/delete-person', methods=['POST'])
 @login_required
 def gdpr_delete_person():
-    """Șterge toate abaterile pentru un person_hash specific."""
     person_hash = request.json.get('person_hash')
     if not person_hash:
         return jsonify({'error': 'person_hash este obligatoriu'}), 400
@@ -563,7 +532,6 @@ def gdpr_delete_person():
 
 
 def _auto_delete_old_captures():
-    """Șterge capturi mai vechi de CAPTURE_RETENTION_DAYS. Rulează o dată pe zi."""
     base_dir = os.path.dirname(os.path.abspath(__file__))
     capture_dir = os.path.join(base_dir, 'static/captures')
     if not os.path.isdir(capture_dir):
@@ -582,7 +550,6 @@ def _auto_delete_old_captures():
 
 
 def _auto_delete_thread():
-    """Background thread pentru ștergerea automată a capturilor."""
     while True:
         _auto_delete_old_captures()
         time.sleep(86400)  # verifică o dată pe zi
@@ -595,7 +562,6 @@ import io as _io
 @app.route('/api/report')
 @login_required
 def export_report():
-    """Export incidente ca CSV sau JSON."""
     from database import get_recent_incidents
     fmt = request.args.get('format', 'json')
     limit = int(request.args.get('limit', 1000))
@@ -613,7 +579,6 @@ def export_report():
 @app.route('/api/stats/violations')
 @login_required
 def violation_stats():
-    """Statistici abateri pentru dashboard (ultimele N zile)."""
     from database import get_violation_stats
     days = int(request.args.get('days', 7))
     return jsonify(get_violation_stats(days=days))
@@ -644,9 +609,9 @@ def ws_disconnect():
 
 
 if __name__ == '__main__':
+    import sys
     from license import check_license_noninteractive, check_license
 
-    # Verifică licență — non-interactiv (systemd/env var) sau interactiv
     if not check_license_noninteractive():
         if not check_license():
             print("❌ Acces refuzat. Aplicația nu poate porni fără cod de acces.")
@@ -663,7 +628,7 @@ if __name__ == '__main__':
 
     # Banner de pornire cu profilul hardware detectat
     print("=" * 60)
-    print("  Safeguard Vision - Multi-Cameră")
+    print("  Safeguard Vision Alpha - Multi-Cameră")
     print("=" * 60)
     print(f"🖥️  Hardware: {hw['name']}")
     print(f"⚡  Target: {hw['target_total_fps']} FPS total | "

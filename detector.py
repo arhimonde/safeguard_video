@@ -110,19 +110,11 @@ class PersonTracker:
 class ObjectDetector:
     def __init__(self, model_path='yolo11n.pt', imgsz=None, half=False, target_total_fps=None):
         """
-        Detector optimizat pentru MULTI-CAMERĂ (până la 25):
-        - YOLO11n pentru detectare persoane (model partajat)
-        - HSV cu cluster analysis pentru PPE (CPU, zero cost GPU)
-        - PersonTracker per cameră
-        - FPS adaptiv: target_total_fps / num_cameras
-
-        Parametrii imgsz și target_total_fps se auto-detectează după hardware
-        dacă sunt lăsați None (vezi jetson_profile.py).
+        YOLO11n detectare persoane + HSV PPE (CPU) + PersonTracker per cameră.
+        imgsz/target_total_fps se auto-detectează după hardware dacă sunt None.
         """
-        # Detectare hardware o singură dată
         self.hw_profile = detect_jetson_profile()
 
-        # Parametri din profil (dacă nu sunt specificați explicit)
         if imgsz is None:
             imgsz = self.hw_profile['imgsz']
         if target_total_fps is None:
@@ -144,31 +136,24 @@ class ObjectDetector:
             'warning': (0, 255, 255)
         }
 
-        # Per-camera state
         self.trackers = {}
         self.alert_times = {}
         self.alert_cooldown = 5
         self._trackers_lock = threading.Lock()
 
-        # FPS adaptiv — adaptat la hardware-ul detectat
         self.target_total_fps = target_total_fps
         self.last_frame_time = time.time()
 
-        # Motion pre-filter — cache frame-uri grayscale per cameră
+        # Motion pre-filter — cache grayscale per cameră
         self._prev_frames = {}
 
-        # Nuclee morfologice (pre-calculate)
         self._morph_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
         self._morph_kernel_small = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
 
         # Cache overlay zonă pericol
         self._danger_zone_cache = None
         self._danger_zone_size = None
-        self.min_box_size = 30
-
-    # -----------------------------------------------------------------
-    # Per-camera tracker management
-    # -----------------------------------------------------------------
+        self.min_box_size = max(20, imgsz // 16)
 
     def get_tracker(self, cam_id):
         with self._trackers_lock:
@@ -183,19 +168,13 @@ class ObjectDetector:
             self._prev_frames.pop(cam_id, None)
 
     def get_fps_per_camera(self, num_cameras):
-        """Calculează FPS adaptiv per cameră."""
         if num_cameras <= 0:
             return 20
-        # 1 cameră = cap 20 FPS, multi-cameră = distribuit
+        # cap 20 FPS per cameră, minim 3
         fps = min(self.target_total_fps // num_cameras, 20)
-        return max(fps, 3)  # minim 3 FPS per cameră
-
-    # -----------------------------------------------------------------
-    # PPE: HSV cu cluster analysis + scoring (CPU only)
-    # -----------------------------------------------------------------
+        return max(fps, 3)
 
     def _preprocess_roi(self, roi):
-        """Normalizare iluminiere prin histogram equalization pe canalul V."""
         if roi.size == 0:
             return roi
         hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
@@ -206,10 +185,7 @@ class ObjectDetector:
         return max(0, x1), max(0, y1), min(w, x2), min(h, y2)
 
     def _find_largest_cluster(self, mask, min_area=50):
-        """
-        Găsește cel mai mare blob conex (componentă conexă).
-        Elimină pixelii izolați de la fundaluri colorate.
-        """
+        """Cel mai mare blob conex — elimină pixelii izolați de la fundaluri."""
         if mask.size == 0 or cv2.countNonZero(mask) == 0:
             return mask
         num_labels, labels, stats_cv, _ = cv2.connectedComponentsWithStats(
@@ -228,12 +204,7 @@ class ObjectDetector:
         return mask
 
     def _analyze_color_region(self, hsv_roi, color_ranges):
-        """
-        Scoring de încredere [0.0, 1.0] bazat pe:
-        - densitate (cât de multă culoare)
-        - compactitate (cât de grupată)
-        - acoperire (raport față de prag)
-        """
+        """Scoring încredere [0,1]: densitate + compactitate + acoperire."""
         if hsv_roi.size == 0:
             return 0.0
         total_area = hsv_roi.shape[0] * hsv_roi.shape[1]
@@ -267,7 +238,6 @@ class ObjectDetector:
         return min(density * 0.35 + compactness * 0.35 + coverage_bonus * 0.30, 1.0)
 
     def _check_ppe_hsv(self, frame, x1, y1, x2, y2):
-        """Verifică cască + vestă prin HSV cu cluster analysis."""
         h_frame, w_frame, _ = frame.shape
         x1, y1, x2, y2 = self._clip_bbox(x1, y1, x2, y2, h_frame, w_frame)
         if (x2 - x1) < self.min_box_size or (y2 - y1) < self.min_box_size:
@@ -315,12 +285,7 @@ class ObjectDetector:
         return helmet_score > 0.18, vest_score > 0.18
 
     def check_ppe(self, frame, x1, y1, x2, y2):
-        """PPE = doar HSV (optimizat pentru multi-cameră, zero cost GPU)."""
         return self._check_ppe_hsv(frame, x1, y1, x2, y2)
-
-    # -----------------------------------------------------------------
-    # Overlay cache
-    # -----------------------------------------------------------------
 
     def _get_danger_zone_overlay(self, w_img, h_img):
         if self._danger_zone_cache is not None and self._danger_zone_size == (w_img, h_img):
@@ -330,10 +295,6 @@ class ObjectDetector:
         self._danger_zone_cache = overlay
         self._danger_zone_size = (w_img, h_img)
         return overlay
-
-    # -----------------------------------------------------------------
-    # Detectia principală (per cameră)
-    # -----------------------------------------------------------------
 
     def detect(self, frame, cam_id):
         if frame is None:
@@ -504,10 +465,6 @@ class ObjectDetector:
                             )
 
         return annotated_frame, stats
-
-    # -----------------------------------------------------------------
-    # Salvare alertă
-    # -----------------------------------------------------------------
 
     def save_alert(self, frame, incident_type, cam_id=None):
         try:

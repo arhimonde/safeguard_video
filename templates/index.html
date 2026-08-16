@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Safeguard Vision - Monitor Multi-Cámara</title>
+    <title>Safeguard Vision Alpha - Monitor Multi-Cámara</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
@@ -13,7 +13,7 @@
 <body>
     <div class="container">
         <header>
-            <h1>📹 Safeguard Vision</h1>
+            <h1>📹 Safeguard Vision <span style="font-size:0.65rem;opacity:0.5">ALPHA</span></h1>
             <div class="header-controls">
                 <div class="status-badge" id="ws-status" style="background: #555;">CONECTANDO...</div>
                 <div class="status-badge" id="cam-count">0 CÁMARAS</div>
@@ -216,6 +216,13 @@
                 const sc = cam.status || 'offline';
                 statusEl.className = `tile-status ${sc}`;
                 statusEl.textContent = sc.toUpperCase();
+            }
+            // Actualiza stats per-cameră (persons + violations)
+            const statsEl = document.getElementById(`stats-${cam.id}`);
+            if (statsEl && cam.stats) {
+                const p = cam.stats.total_persons || 0;
+                const v = cam.stats.violations || 0;
+                statsEl.innerHTML = `<span class="tile-persons">👤 ${p}</span><span class="tile-violations">⚠️ ${v}</span>`;
             }
         }
 

@@ -23,7 +23,7 @@ case $COMANDO in
         $SSH_CMD -t $JETSON_USER@$JETSON_IP "bash $REMOTE_PATH/remote_setup_jetson.sh"
         ;;
     "start")
-        echo "▶️ Iniciando Safeguard Vision en Jetson (Modo ULTRA)..."
+        echo "▶️ Iniciando Safeguard Vision Alpha en Jetson (Modo ULTRA)..."
         $SSH_CMD -t $JETSON_USER@$JETSON_IP "sudo -S <<< '$JETSON_PASS' nvpmodel -m 0; sudo -S <<< '$JETSON_PASS' jetson_clocks; export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/lib/aarch64-linux-gnu/tegra:\$LD_LIBRARY_PATH; cd $REMOTE_PATH && python3 app.py"
         ;;
     "remote")
@@ -39,8 +39,8 @@ case $COMANDO in
         $SSH_CMD $JETSON_USER@$JETSON_IP "ps aux | grep 'python3 app.py' | grep -v grep"
         ;;
     "diag")
-        echo "🔍 Ejecutando diagnósticos en Jetson..."
-        $SSH_CMD -t $JETSON_USER@$JETSON_IP "bash $REMOTE_PATH/jetson_diag.sh"
+        echo "🔍 Ejecutando checklist de testare en Jetson..."
+        $SSH_CMD -t $JETSON_USER@$JETSON_IP "bash $REMOTE_PATH/jetson_test_checklist.sh"
         ;;
     "perf")
         echo "🚀 Ejecutando prueba de rendimiento en Jetson..."

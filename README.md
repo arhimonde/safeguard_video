@@ -1,4 +1,4 @@
-# Safeguard Vision
+# Safeguard Vision Alpha
 
 Sistem de monitorizare PPE (cască + vestă) pentru medii industriale, optimizat pentru NVIDIA Jetson. Detectare multi-cameră în timp real cu YOLO11n + TensorRT INT8, analiză HSV pentru PPE, tracking persoane, și sistem anti-recidivă.
 
@@ -115,11 +115,9 @@ Vezi `config.example.json` pentru template. Conține:
 | `remote_setup_jetson.sh` | Setup complet (CUDA, PyTorch, Ultralytics) |
 | `convert_to_tensorrt.sh` | Export YOLO11n → TensorRT INT8 |
 | `jetson_cmd.sh` | Comenzi remote (setup/start/remote/stop/diag/perf) |
-| `jetson_diag.sh` | Diagnostic hardware |
 | `jetson_perf.sh` | Benchmark YOLO11n |
-| `jetson_max_perf.sh` | MAXN power mode + jetson_clocks |
 | `fix_opencv.sh` | OpenCV GStreamer pe Jetson |
-| `install_cusparselt.sh` | cuSPARSELt pentru PyTorch GPU |
+| `jetson_test_checklist.sh` | 12 verificări automate pe Jetson |
 
 ## Performanță estimată
 
