@@ -1,25 +1,25 @@
 # Safeguard Vision Alpha
 
-Sistem de monitorizare PPE (cască + vestă) pentru medii industriale, optimizat pentru NVIDIA Jetson. Detectare multi-cameră în timp real cu YOLO11n + TensorRT INT8, analiză HSV pentru PPE, tracking persoane, și sistem anti-recidivă.
+Sistema de monitorización de EPI (casco y chaleco) para entornos industriales, optimizado para NVIDIA Jetson. Detección multicanal en tiempo real con YOLO11n + TensorRT INT8; recibe alertas por Telegram y Email cuando se detectan incumplimientos de seguridad.
 
-## Funcții principale
+## Funcionalidades principales
 
-- **Multi-cameră** — până la 25 camere RTSP/USB/CSI cu limită adaptivă după hardware
-- **Auto-detectare Jetson** — FPS, rezoluție, device se adaptează automat (AGX Orin → Jetson Nano)
-- **YOLO11n + TensorRT INT8** — 200 FPS pe AGX Orin 64GB, ~15 FPS pe Jetson Nano
-- **HSV PPE detection** — cască + vestă via color-space analysis (zero cost GPU)
-- **Person tracking** — IoU + buffer 5 frame-uri (decizie stabilă, zero flickering)
-- **Soft tracking** — persoana alertată e ignorată până iese din cadru
-- **Sistem anti-recidivă** — escaladare: 1a abatere=warning, 2a=danger, 3a=critical+notificare
-- **Notificări externe** — Telegram + Email la severity critical
-- **GDPR** — endpoints pentru ștergere date, auto-delete capturi > 30 zile
-- **Securitate** — licență cod acces, criptare RTSP, rate limiting, CORS restrictiv
-- **Protecție cod** — ofuscare PyArmor (bytecode criptat AES)
-- **Remote access** — Loophole tunnel pentru acces din exterior
+- **Multicámara** — hasta 25 cámaras RTSP/USB/CSI con límite adaptativo según el hardware
+- **Auto‑detección Jetson** — FPS, resolución y dispositivo se adaptan automáticamente (AGX Orin → Jetson Nano)
+- **YOLO11n + TensorRT INT8** — ~200 FPS en AGX Orin 64GB, ~15 FPS en Jetson Nano
+- **Detección EPI por HSV** — casco + chaleco mediante análisis del espacio de color (sin coste de GPU)
+- **Seguimiento de personas** — IoU + búfer de 5 frames (decisión estable, sin flicker)
+- **Soft tracking** — la persona marcada se ignora hasta que salga del cuadro
+- **Sistema anti‑recidiva** — escalado: 1.ª falta = warning, 2.ª = danger, 3.ª = critical + notificación
+- **Notificaciones externas** — Telegram + Email en severidad critical
+- **GDPR** — endpoints para eliminación de datos, borrado automático de capturas > 30 días
+- **Seguridad** — código de acceso por licencia, cifrado RTSP, rate limiting, CORS restrictivo
+- **Protección del código** — ofuscación con PyArmor (bytecode cifrado AES)
+- **Acceso remoto** — túnel Loophole para acceso externo
 
-## Instalare rapidă
+## Instalación rápida
 
-### Pe PC/Mac (dezvoltare)
+### En PC/Mac (desarrollo)
 ```bash
 python3 -m venv venv
 source venv/bin/activate
@@ -28,48 +28,48 @@ python3 license.py --set COD_ACCES
 python3 app.py
 ```
 
-### Pe NVIDIA Jetson (producție)
+### En NVIDIA Jetson (producción)
 ```bash
-# 1. Deploy cod de pe PC
+# 1. Desplegar código desde el PC
 bash deploy_to_jetson.sh
 
-# 2. Pe Jetson — setup complet (CUDA, PyTorch GPU, Ultralytics)
+# 2. En Jetson — instalación completa (CUDA, PyTorch GPU, Ultralytics)
 bash remote_setup_jetson.sh
 
-# 3. Conversie TensorRT INT8 (2x mai rapid)
+# 3. Conversión a TensorRT INT8 (2x más rápido)
 bash convert_to_tensorrt.sh
 
-# 4. Set cod acces + pornire
+# 4. Establecer código de acceso y arrancar
 python3 license.py --set COD_ACCES
 python3 app.py
 ```
 
-Vezi [LICENSE_GUIDE.md](LICENSE_GUIDE.md) pentru detalii licență + ofuscare.
+Consulta [LICENSE_GUIDE.md](LICENSE_GUIDE.md) para detalles sobre licencia y ofuscación.
 
-## Acces
+## Acceso
 
 - **Local**: `http://localhost:5000`
-- **Remote**: `python3 loophole_tunnel.py` → URL `.loophole.site`
-- **Login**: prima pornire creează `admin` / `admin123` (se schimbă automat la prima logare)
+- **Remoto**: `python3 loophole_tunnel.py` → URL `.loophole.site`
+- **Login**: el primer arranque crea `admin` / `admin123` (se cambia automáticamente en el primer login)
 
-## Configurare
+## Configuración
 
-### cameras.json (gitignored — conține credențiale RTSP)
+### cameras.json (ignorados por git — contiene credenciales RTSP)
 ```json
 [
   {"id": 1, "name": "Intrare", "url": "rtsp://admin:pass@192.168.1.101:554/stream1", "enabled": true},
   {"id": 2, "name": "Depozit A", "url": "rtsp://admin:pass@192.168.1.102:554/stream1", "enabled": true}
 ]
 ```
-Parolele RTSP sunt criptate automat (XOR + base64) la salvare. Permisiuni `chmod 600`.
+Las contraseñas RTSP se cifran automáticamente (XOR + base64) al guardar. Permisos `chmod 600`.
 
-### config.json (gitignored — notificări + CORS)
-Vezi `config.example.json` pentru template. Conține:
-- Telegram Bot token + chat ID
-- SMTP (email) configurație
-- CORS allowed origins
+### config.json (ignorados por git — notificaciones + CORS)
+Consulta `config.example.json` como plantilla. Contiene:
+- Token del bot de Telegram + chat ID
+- Configuración SMTP (email)
+- Orígenes permitidos en CORS
 
-## Arhitectură
+## Arquitectura
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -80,59 +80,58 @@ Vezi `config.example.json` pentru template. Conține:
 │  app.py                                     │
 │  ├── CameraManager (cameras.json)           │
 │  │   └── VideoCamera × N (RTSP threads)     │
-│  │       └── Limită max_cameras (hardware)  │
+│  │       └── Límite max_cameras (hardware)  │
 │  ├── ObjectDetector (YOLO11n + TensorRT)    │
 │  │   ├── Motion pre-filter (skip GPU)       │
-│  │   ├── PersonTracker × N (IoU + history)   │
-│  │   ├── HSV PPE (cască + vestă, CPU)       │
-│  │   └── Escaladare anti-recidivă           │
+│  │   ├── PersonTracker × N (IoU + history)  │
+│  │   ├── HSV PPE (casco + chaleco, CPU)     │
+│  │   └── Escalado anti-recidiva             │
 │  ├── Notifier (Telegram + Email)            │
 │  └── Database (SQLite: incidents, users,    │
 │      violations_log)                         │
 └─────────────────────────────────────────────┘
 ```
 
-## Fișiere principale
+## Archivos principales
 
-| Fișier | Rol |
+| Archivo | Rol |
 |---|---|
-| `app.py` | Server Flask + WebSocket + rute API |
-| `detector.py` | YOLO11n + HSV PPE + tracking + escaladare |
-| `camera.py` | VideoCamera (RTSP/USB/CSI + auto-reconnect) |
-| `camera_manager.py` | Manager multi-cameră + limită hardware |
-| `jetson_profile.py` | Auto-detectare hardware + profiluri |
+| `app.py` | Servidor Flask + WebSocket + rutas API |
+| `detector.py` | YOLO11n + HSV PPE + tracking + escalado |
+| `camera.py` | VideoCamera (RTSP/USB/CSI + reconexión automática) |
+| `camera_manager.py` | Gestor multicámara + límite por hardware |
+| `jetson_profile.py` | Auto-detección de hardware + perfiles |
 | `database.py` | SQLite: incidents, users, violations_log |
-| `notifier.py` | Telegram + Email alerte |
-| `logger_config.py` | Logging structurat cu rotare |
-| `license.py` | Cod de acces + verificare |
-| `obfuscate.sh` | Ofuscare PyArmor (bytecode criptat) |
+| `notifier.py` | Alertas Telegram + Email |
+| `logger_config.py` | Logging estructurado con rotación |
+| `license.py` | Código de acceso + verificación |
+| `obfuscate.sh` | Ofuscación con PyArmor (bytecode cifrado) |
 
-## Scripturi Jetson
+## Scripts para Jetson
 
 | Script | Rol |
 |---|---|
-| `deploy_to_jetson.sh` | rsync cod → Jetson |
-| `remote_setup_jetson.sh` | Setup complet (CUDA, PyTorch, Ultralytics) |
-| `convert_to_tensorrt.sh` | Export YOLO11n → TensorRT INT8 |
-| `jetson_cmd.sh` | Comenzi remote (setup/start/remote/stop/diag/perf) |
+| `deploy_to_jetson.sh` | rsync código → Jetson |
+| `remote_setup_jetson.sh` | Setup completo (CUDA, PyTorch, Ultralytics) |
+| `convert_to_tensorrt.sh` | Exportar YOLO11n → TensorRT INT8 |
+| `jetson_cmd.sh` | Comandos remotos (setup/start/remote/stop/diag/perf) |
 | `jetson_perf.sh` | Benchmark YOLO11n |
-| `fix_opencv.sh` | OpenCV GStreamer pe Jetson |
-| `jetson_test_checklist.sh` | 12 verificări automate pe Jetson |
+| `fix_opencv.sh` | OpenCV GStreamer en Jetson |
+| `jetson_test_checklist.sh` | 12 comprobaciones automáticas en Jetson |
 
-## Performanță estimată
+## Rendimiento estimado
 
-| Hardware | FPS total | imgsz | Max camere | INT8 |
-|---|---|---|---|---|
+| Hardware | FPS total | imgsz | Max cámaras | INT8 |
+|---|---:|---:|---:|---:|
 | AGX Orin 64GB | ~200 | 480 | 20 | ✅ |
 | AGX Orin 32GB | ~170 | 480 | 17 | ✅ |
 | Orin NX 16GB | ~110 | 480 | 11 | ✅ |
 | Orin Nano 8GB | ~50 | 416 | 5 | ✅ |
 | AGX Xavier | ~80 | 416 | 8 | ❌ |
 | Jetson Nano | ~15 | 320 | 1 | ❌ |
-| CPU (fără GPU) | ~10 | 320 | 1 | ❌ |
+| CPU (sin GPU) | ~10 | 320 | 1 | ❌ |
 
+## Licencia
 
-## Licență
-
-Vezi [LICENSE](LICENSE) pentru detalii.
-Protecția codului sursă: [LICENSE_GUIDE.md](LICENSE_GUIDE.md).
+Consulta [LICENSE](LICENSE) para detalles.
+Protección del código fuente: [LICENSE_GUIDE.md](LICENSE_GUIDE.md).
